@@ -1,0 +1,15 @@
+{
+  "name": "devpilot-marketplace",
+  "description": "Marketplace hosting the DevPilot plugin — Siyu Qian's Claude Code workflow catalog.",
+  "owner": {
+    "name": "Siyu Qian",
+    "url": "https://github.com/SiyuQian"
+  },
+  "plugins": [
+    {
+      "name": "devpilot",
+      "source": "./",
+      "description": "DevPilot workflow catalog: PR review/creation, repo scanning, issue triage & resolution, PRD decomposition, code style, content creation, and daily productivity skills."
+    }
+  ]
+}

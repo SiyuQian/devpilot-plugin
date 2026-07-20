@@ -1,0 +1,196 @@
+# Parallel Fanout: Six Subagent Briefs
+
+Dispatch all subagents in a **single message with parallel Task calls** so they run concurrently. Each subagent gets the same PR header (URL, title, head SHA, base SHA, files changed list, full diff) **plus the graph preflight payload** (or the `graph_unavailable: <reason>` marker if step 1.5 fell back) and one focused brief from this file. Agent F dispatch is gated on the dispatcher's pre-extracted dependency manifest per `references/import-verifier.md` → "What the dispatcher pre-extracts": if the manifest is empty, skip F entirely.
+
+## Shared graph header (injected into every brief)
+
+When graph is available, the dispatch prepends this block to every Agent's prompt:
+
+```
+GRAPH_PREFLIGHT (authoritative for callers, hubs, untested public surface):
+- changed_symbols: <id, kind, is_exported, callers.count, callers.sample[], in_hub, tests.has_tests, risk_factors[]>
+- cross_community_edges: <from → to, count_added, samples[]>
+- risk_summary: <hub_nodes_modified, untested_public_changes, interface_changes, new_cross_community_edges>
+Source of truth for "who calls X" and "is X a hub". Do NOT re-derive these via grep.
+```
+
+When graph fell back, the block instead reads `graph_unavailable: <reason>; use grep, expect lower confidence on blast-radius claims`. See `references/graph.md` for the full payload schema and fallback rules.
+
+Each subagent returns a JSON-ish list of findings:
+
+```
+- path: <repo-relative>
+  line: <int, head SHA>     # use new-side line for added/changed; old-side for deleted (note `side: LEFT`)
+  side: RIGHT | LEFT
+  severity: Blocking | Should-fix | Consider | Nit
+  confidence: 0–100
+  title: <≤80 chars>
+  behavior: <what the code actually does today on this branch>
+  why: <impact on users / data / operability>
+  fix: <concrete direction, name the helper/package/function>
+  agent: <A | B | C | D | E | F>
+```
+
+Subagents MUST NOT post anything; their output is purely returned to the main session for filtering and merging.
+
+---
+
+## Agent A — Behavior Sweep
+
+You are reviewing a pull request for behavior-level defects. Your job is the five-question blind-spot sweep plus a behavior trace. You read code, including callers and tests, before asserting anything.
+
+**Inputs:**
+- PR URL, title, body, head SHA, base SHA, files changed.
+- Full diff (`gh pr diff <url>`).
+- The shared graph preflight payload (above) — authoritative for callers / hubs / untested surface.
+
+**Process:**
+1. Read the diff end-to-end. Then read the full files touched (not just the hunks).
+2. Run the five blind-spot questions from `references/unknown-unknowns.md`:
+   1. Local pattern fit
+   2. **Blast radius — consume `GRAPH_PREFLIGHT.changed_symbols[].callers` directly.** For each exported / behaviorally-modified symbol, list every caller from the payload, check each in turn against the change, and ask: does this caller still satisfy its contract after the change? Only fall back to grep if the shared header says `graph_unavailable`, or if the change involves reflection / codegen / string-keyed dispatch the static graph cannot see — name the reason explicitly. A symbol with `risk_factors: ["untested_public"]` is a Should-fix finding by itself. A symbol with `callers.in_hub: true` escalates severity for any behavior change.
+   3. Known pitfalls for this change class (auth, concurrency, migration, DB query, retry, cache, LLM, input boundary, data write, reversibility)
+   4. Stale-training check (verify versions in `go.mod`/`package.json`)
+   5. Hand-rolled vs. off-the-shelf (search repo + deps for existing utilities)
+3. Trace at least one golden-path input and one edge-case input through the change. Record the observable behavior delta. Use `GRAPH_PREFLIGHT.cross_community_edges` to spot whether this PR newly widens a package boundary — a Consider-level finding when unexpected.
+
+   **Untested public surface — write the finding, do not rationalize it.** For every symbol with `risk_factors` containing `untested_public`, write an inline finding with a *concrete* suggested test (test function name, package, the specific path it should cover). If you skip it, the main session injects a generic default in step 1.5 of `confidence.md` — your only lever is to *upgrade* with a better fix suggestion, not to suppress. Do not argue that a defensive guard / mirror of a tested pattern / author-justified-in-PR-body is "too minor for a test" — the author's justification belongs in the resolution thread, not in your decision to silence the finding.
+4. Produce a one-line summary per question for the body (`### Unknown-Unknowns Sweep` section). Concrete defects discovered during the sweep ALSO become individual findings anchored to lines. The blast-radius line MUST cite the caller count from the graph payload (or say `grep-only fallback` with the reason).
+
+**Output:** Findings list (one per concrete defect) + a `sweep_summary` block with five lines (one per question).
+
+**Confidence calibration:**
+- 100: literal-string evidence in the diff (e.g. "log statement leaks the token").
+- 85–95: traced through code on this branch; you opened the relevant files. Findings whose caller chain is corroborated by `GRAPH_PREFLIGHT` start at this floor.
+- 70–84: defect inferred from a clear pattern, but you didn't trace every path.
+- 50–69: plausible but you couldn't open the caller/test that would confirm.
+- < 50: speculation. Drop unless you can raise confidence.
+
+---
+
+## Agent B — Shallow Bug Scan
+
+You are looking for **obvious bugs in the diff itself**. Read the changes, do not chase callers. Focus on large bugs; ignore nits.
+
+**Process:**
+1. Read the diff.
+2. For each changed function, look for: swapped conditions, off-by-one, nil/zero handling, error swallowing, panic in library code, defer/Close leaks, resource leaks, missing cancellation, dead branches, copy-paste bugs, wrong format specifier, wrong unit (seconds vs. ms).
+3. **Walk the [REQUIRED CHECKS] in `references/checklist.md` §Security AND §Performance.** For every item, either produce a finding OR record `checked, no_evidence` / `not_applicable (<reason>)` in the `coverage` block. Silent skip is forbidden. The canonical rationalization "low risk because input isn't attacker-controlled today" is itself a Consider-level finding ("assumption recorded: <input> is currently trusted; if that ever changes, this becomes ___") — write it; do not swallow it.
+4. Apply the false-positive filter in `references/eligibility.md` to your own output before returning.
+
+**Return shape:** `{findings: [...], coverage: { security: {...}, performance: {...} }}` per `references/checklist.md` → "Coverage block" (canonical spec).
+
+**Hard rules:**
+- Do not flag pre-existing code that the PR didn't touch.
+- Do not flag things a linter or typechecker would catch.
+- Do not flag general "code quality" issues — those are Agent C's job if CLAUDE.md says so.
+
+**Confidence calibration:**
+- 90–100: bug you can describe in one sentence pointing at a specific line.
+- 75–89: likely bug; the surrounding code makes it plausible.
+- < 70: speculation; drop.
+
+**Output:** Findings list, each anchored to a line.
+
+---
+
+## Agent C — CLAUDE.md / AGENTS.md Compliance
+
+You enforce the repo's own rules as written in `CLAUDE.md` and `AGENTS.md`.
+
+**Process:**
+1. List all `CLAUDE.md` and `AGENTS.md` files reachable from the repo root and from the directories whose files this PR modifies. Use `find` / `git ls-files`.
+2. Read each. Extract the rules that apply at review time (not the ones aimed at code-writing-time only).
+3. For each rule, check the diff against it. Cite the file path and the quoted rule text in your finding.
+
+**Hard rules:**
+- A rule must be **literally present** in a `CLAUDE.md`/`AGENTS.md`. Do not invent rules from "good practice".
+- If the code has an explicit silence (`//nolint`, ignore comment), respect it.
+- A rule violation is a finding even if Agent B didn't flag it.
+
+**Confidence calibration:**
+- 100: rule is literal in CLAUDE.md AND violation is literal in the diff.
+- 80–95: rule is literal; violation requires light interpretation.
+- < 70: rule requires interpretation. Drop.
+
+**Output:** Findings list, each citing the exact CLAUDE.md path and quoted text.
+
+---
+
+## Agent D — Git History & Prior PR Comments
+
+You read the history of the files this PR touches to surface context the diff alone misses.
+
+**Process:**
+1. For each modified file, run `git log --oneline -20 -- <path>` and skim recent commits.
+2. Run `git blame <path> -L <changed-lines>` for the lines being changed — note who wrote the surrounding code and when.
+3. List prior PRs that touched these files: `gh pr list --search "<path>" --state merged --limit 10 --json number,title,url`.
+4. For the most recent 3–5 prior PRs, fetch review comments: `gh api repos/:owner/:repo/pulls/:num/comments --jq '.[] | {path, line, body}'`.
+5. Look for: comments that flagged something now re-introduced in this PR, design decisions explained in commit messages, revert/rollback history (a line that was reverted before is high-risk to re-add).
+
+**Hard rules:**
+- A finding here needs a concrete pointer (commit SHA or PR URL).
+- Don't surface old comments unless they apply to the current change.
+
+**Confidence calibration:**
+- 90–100: prior PR comment flagged exactly this defect on the same line/symbol.
+- 70–89: prior history strongly suggests this pattern was rejected before.
+- < 70: drop.
+
+**Output:** Findings list. Each finding cites a commit SHA or prior PR URL.
+
+---
+
+## Agent F — Dependency Reality Check
+
+Mechanical existence check on newly-added dependencies. Catches hallucinated packages ("slopsquatting") that pass every other text-based review.
+
+**Input:** the dispatcher's pre-extracted dependency manifest (Go / npm / Python / Rust). Conditional dispatch — only invoked when non-empty.
+
+**Brief:** follow `references/import-verifier.md` end-to-end (process, per-ecosystem commands, severity rules, finding shape, coverage block, fallback handling).
+
+**Output:** findings list + `coverage.dependencies` block per that spec.
+
+---
+
+## Agent E — In-File Comments & Conventions
+
+You read the comments inside the modified files and check the diff against them.
+
+**Process:**
+1. Read each modified file's existing comments — file headers, function docstrings, in-line `// NOTE` / `// TODO` / `// invariant:` / `// must be called with lock held` style notes.
+2. Check whether the diff respects them. New code that violates a documented invariant is a finding.
+3. Also check naming conventions visible in neighboring code in the same package.
+
+**Hard rules:**
+- Cite the exact comment text and its line.
+- Don't flag the absence of a doc comment unless CLAUDE.md requires it (that's Agent C).
+
+**Confidence calibration:**
+- 90–100: comment states the rule and the diff visibly violates it.
+- 70–89: convention is consistent across neighboring code and the diff diverges.
+- < 70: drop.
+
+**Output:** Findings list, each citing the comment line.
+
+---
+
+## Dispatch template (main session)
+
+```python
+# Pseudocode — actually invoked as parallel Task calls in a single message.
+agents = ["A", "B", "C", "D", "E"]
+manifest = extract_dependency_manifest(diff)   # see import-verifier.md
+if manifest:
+    agents.append("F")
+for agent in agents:
+    parallel_tasks.append(
+        Task(
+            description=f"PR review fanout agent {agent}",
+            subagent_type="general-purpose",
+            prompt=BRIEF[agent] + SHARED_PR_HEADER + (DEPENDENCY_MANIFEST if agent == "F" else ""),
+        )
+    )
+```
+
+After all dispatched agents return, proceed to `references/confidence.md` for filtering and merging.

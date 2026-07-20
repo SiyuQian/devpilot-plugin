@@ -1,0 +1,14 @@
+{
+  "name": "devpilot",
+  "version": "1.0.0",
+  "description": "DevPilot workflow catalog for Claude Code: PR review/creation, repo scanning, issue triage & resolution, PRD decomposition, code style, content creation, and daily productivity skills.",
+  "author": {
+    "name": "Siyu Qian",
+    "email": "david.s.qian@gmail.com",
+    "url": "https://github.com/SiyuQian"
+  },
+  "homepage": "https://github.com/SiyuQian/devpilot-plugin",
+  "repository": "https://github.com/SiyuQian/devpilot-plugin",
+  "license": "MIT",
+  "keywords": ["workflow", "pr-review", "github", "issues", "go", "productivity"]
+}
