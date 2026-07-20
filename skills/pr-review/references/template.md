@@ -65,6 +65,8 @@ The body holds only what doesn't belong on a single line: Verdict, TL;DR, Streng
 ### Security / Performance coverage
 <n>/<total_security> security required-checks completed · <n>/<total_perf> performance required-checks completed
 <one line per `not_applicable` item with the reason; omit the line entirely if all checks were `checked, no_evidence` or `finding_raised`>
+<if Agent B's coverage.assumptions is non-empty: one line "Assumptions recorded: <n> — <one short clause each>"; omit when empty>
+<dependency line from Agent F: "Dependency reality: <n>/<n> artifacts verified" or "agent_f: skipped (<reason>)">
 
 ### Inline findings (count by severity)
 - Blocking: <n>
@@ -99,18 +101,12 @@ Inline comments: <total count>
   - Match the PR language. Chinese PR example: `1 处阻断、2 处建议修复`; approve case: `可以合并`.
 - **`<short-sha>`** — first 7 chars of the head commit SHA (`gh pr view --json headRefOid -q '.headRefOid[:7]'` or `git rev-parse --short=7 HEAD`). Same commit as the full SHA in the trailing metadata block.
 - **Language** — render every section (TL;DR, sweep, counts, what's working well, Open Questions, disclaimer, metadata) in the PR's language. Translate the disclaimer while preserving its meaning: automated, not authoritative, human judgment required.
-- **Verdict** — derived from the highest-severity surviving inline finding:
-  - Any Blocking → `Ready to merge: No`
-  - Only Should-fix / Consider / Nit → `Ready to merge: With fixes`
-  - Zero findings → `Ready to merge: Yes`
+- **Verdict** — derived from the highest-severity surviving inline finding (`confidence.md` is the single source for severity semantics): any Blocking → `No`; only Should-fix / Consider / Nit → `With fixes`; zero findings → `Yes`.
 - **Severity counts** — derived from the inline comments actually posted. Drop zero-count buckets from the list.
 - **Empty sections** — `Open Questions` and `Strengths` are omitted-when-empty (drop the heading entirely). `Unknown-Unknowns Sweep` is always present but collapses to the one-line "no concerns" form when all five dimensions are clean. TL;DR, Inline findings counts, disclaimer, and both metadata blocks are always present.
 - **AST / code graph note in disclaimer** — fill the bracketed slot honestly based on whether graph preflight facts were available for this review: `used` (full graph available and consulted), `partial: <what was missing>` (e.g. "callers of foo() unresolved"), or `not available` (no graph for this language/repo). Do not omit this slot.
 - **Reviewed commit** — `gh pr view --json headRefOid -q .headRefOid` (or `git rev-parse HEAD` in the checked-out PR). Full 40-char SHA, not abbreviated. Lets readers tell whether a later force-push invalidated the review.
-- **Review event** — derived from the highest-severity inline finding:
-  - Any Blocking → `REQUEST_CHANGES`
-  - Only Should-fix / Consider / Nit → `COMMENT`
-  - Zero findings → `APPROVE`
+- **Review event** — derived from the highest-severity inline finding per the severity → event mapping in `confidence.md` (the single source for that table).
 
 For a fully-filled reference (body + multiple inline comments), see `example-review.md`.
 

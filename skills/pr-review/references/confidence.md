@@ -15,18 +15,27 @@ Confidence measures **how sure you are the finding is real**, independent of how
 | 25–49 | Speculation grounded in general knowledge, not in this codebase. |
 | 0–24 | Not really a finding. Should not have been surfaced. |
 
-## Default threshold: 70
+## Thresholds: tiered by severity
 
-Drop every finding with `confidence < 70` before drafting.
+Drop findings below the threshold for their severity before drafting:
 
-**Why 70:**
+| Severity | Threshold | Extra cap |
+|---|---|---|
+| Blocking / Should-fix | `confidence ≥ 70` | none |
+| Consider | `confidence ≥ 85` | max 3 per review — keep the top 3 by confidence; fold the rest into one body sweep-summary sentence ("plus N lower-priority design notes: <one clause each>") |
+| Nit | `confidence ≥ 85` | none |
+
+**Why tiered:**
 - Below 70 the reviewer has not opened the code that would confirm. Posting it lowers signal.
-- 70 is below "traced on this branch" (85+) but above pure pattern-match speculation. It keeps high-pattern-match findings worth a sentence.
+- For Blocking/Should-fix, 70 keeps high-pattern-match findings worth a sentence — the cost of a missed real bug outweighs a marginal comment.
+- Consider and Nit are subjective by nature; a 70-confidence "worth thinking about" is noise. 85 means "traced on this branch", and the 3-per-review cap keeps design feedback from drowning the defects.
 
 **When to override:**
-- The user explicitly asked for "everything, including maybes" → threshold = 50.
-- The user asked for "only certain" → threshold = 85.
-- Otherwise: 70. Don't bargain with yourself.
+- The user explicitly asked for "everything, including maybes" → all thresholds = 50, no Consider cap.
+- The user asked for "only certain" → all thresholds = 85.
+- Otherwise: the table. Don't bargain with yourself.
+
+**Security floor:** a finding that matches any §Security [REQUIRED CHECKS] item in `checklist.md` (secrets, injection, authz, credential leakage, TLS) has `Severity: Should-fix` as its floor — never Consider or Nit, regardless of how small the fix is. Impact-if-true for leaked credentials is never "design feedback".
 
 ## Severity vs. Confidence are orthogonal
 
@@ -71,7 +80,7 @@ A finding both corroborated on one dimension and contradicted on another takes t
 1.5. **Inject graph-derived findings** for missing tests on changed public surface. See "Graph-injected findings" below. Skip if graph fell back.
 2. **Reconcile** against `GRAPH_PREFLIGHT` per the section above (skip if graph fell back).
 3. **Filter:**
-   - Drop `confidence < 70` (or the user-overridden threshold).
+   - Apply the tiered thresholds (see "Thresholds" above): Blocking/Should-fix ≥ 70; Consider ≥ 85 capped at 3 per review; Nit ≥ 85. Apply the security severity floor first (a security-check match can't sit in the Consider bucket).
    - Drop anything matching the false-positive list in `eligibility.md`.
 4. **Dedupe:**
    - Same `(path, line)` and same defect class from multiple agents → one finding. Keep the highest confidence; merge the fixes if they differ.

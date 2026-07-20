@@ -21,7 +21,7 @@ Every category produces zero or more findings. Each finding becomes an inline co
 
 ## Security [REQUIRED CHECKS]
 
-Agent B MUST walk every item below for code in the diff. For each item, produce a finding OR return an entry in the `coverage` block (`{item}: checked, no_evidence`). "Risk is low because the input isn't attacker-controlled today" is the canonical silent-skip rationalization — write it as a Consider-level finding with the assumption made explicit, not as a silent pass.
+Agent B MUST walk every item below for code in the diff. For each item, produce a finding OR return an entry in the `coverage` block (`{item}: checked, no_evidence`). "Risk is low because the input isn't attacker-controlled today" is the canonical silent-skip rationalization — record it in the coverage block's `assumptions` list (see below) with the assumption made explicit, not as a silent pass and NOT as an inline finding. Escalate to a real finding only when the assumption is visibly false in the diff (the input demonstrably crosses a trust boundary).
 
 - **Hardcoded secrets** — API keys, tokens, passwords, private keys, OAuth client secrets, signing keys, JWT secrets in source/config/test fixtures added by the diff.
 - **Credential placement** — secrets transported via URL query / referer-leaking surface / GET requests / debug logs; should be header / body / encrypted store.
@@ -76,7 +76,11 @@ coverage:
     blocking_hot_path: finding_raised
     connection_reuse: checked, no_evidence
     inner_loop_allocation: checked, no_evidence
+  assumptions:
+    - "string_interpolation: shell arg at cmd/run.go:42 is trusted (comes from our own config file today)"
 ```
+
+**`assumptions`** — zero or more one-line entries, each naming the checklist item, the location, and the trust assumption being made. These render as a single summary line in the review body ("Assumptions recorded: N"), never as inline comments.
 
 **Allowed values per item:** `checked, no_evidence` | `finding_raised` | `not_applicable (<one-line reason>)`. Anything else, including missing keys, is invalid — main session re-dispatches once (see `confidence.md` → coverage assertion).
 
@@ -84,10 +88,10 @@ coverage:
 
 ## Testing
 
-- **Tests exercise behavior, not mocks of our own packages** (`CLAUDE.md` rule).
+- **Tests exercise behavior, not mocks of our own packages.** If the target repo's convention files (via Agent C) say otherwise, the repo's rule wins.
 - **Edge cases covered** — same list as Code quality above.
 - **Integration tests where a unit test cannot prove the contract** — anything touching DB, queue, network, file system, or cross-process state.
-- **All tests passing on the head SHA.** A red CI check is itself a finding.
+- **CI status on the head SHA** — a red CI check is NOT an inline finding (see `eligibility.md` false-positive list: CI surfaces it separately). Note it in one sentence next to the body's Verdict instead.
 - **A risky path without a test is a finding**, even when nothing else is wrong with the code.
 
 ## Requirements

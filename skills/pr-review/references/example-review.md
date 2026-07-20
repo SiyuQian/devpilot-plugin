@@ -5,14 +5,14 @@ A fully-filled review for a hypothetical auth PR. Use it as a calibration refere
 The single combined POST contains:
 
 - **One review body** (rendered below in `<review_body>`).
-- **Three inline comments** (rendered below in `<inline_comment_1..3>`), each anchored to a specific `(path, line)`.
+- **Three inline comments** (rendered below in `<inline_comment_1..3>`), each anchored to a specific `(path, line)` — one Blocking, two Should-fix.
 - **Event:** `REQUEST_CHANGES`, derived from the highest-severity inline finding (the `Blocking` recursion bug).
 
 ## Review body
 
 <review_body>
 <!-- devpilot:pr-review (devpilot v0.12.2) -->
-@alex-chen — 1 blocking, 1 should-fix, 1 consider · reviewed at 3c0e8f7
+@alex-chen — 1 blocking, 2 should-fix · reviewed at 3c0e8f7
 
 ## PR Review: feat(auth): add session refresh on 401 (#214)
 
@@ -33,10 +33,14 @@ The refresh path calls back into itself when the refresh endpoint returns 401, w
 - Known pitfalls (auth + retry + security): recursion on 401-from-refresh, token leakage into error logs, race between two concurrent 401s triggering two refreshes. All three are inline.
 - Hand-rolled vs. off-the-shelf: the backoff loop at `client.go:88–104` duplicates behavior available in `golang.org/x/time/rate`, already in `go.mod`.
 
+### Security / Performance coverage
+8/8 security required-checks completed · 7/7 performance required-checks completed
+Assumptions recorded: 1 — refresh endpoint URL comes from our own config, treated as trusted
+Dependency reality: agent_f: skipped (no new dependencies)
+
 ### Inline findings (count by severity)
 - Blocking: 1
-- Should-fix: 1
-- Consider: 1
+- Should-fix: 2
 
 ### Open Questions
 - Is this `RoundTrip` reused by the mobile SDK? I did not find callers outside this repo.
@@ -85,7 +89,7 @@ Inline comments: 3
 ## Inline comment #3 — anchored to `internal/auth/client.go:83`
 
 <inline_comment_3>
-### [Consider] Refresh error includes the full token in the log line
+### [Should-fix] Refresh error includes the full token in the log line
 
 **Behavior today on this branch:** `log.Printf("refresh failed: %s (token=%s)", err, tok)` writes the full access token into whatever sink `log` is wired to.
 
@@ -99,7 +103,7 @@ Inline comments: 3
 ## What to notice
 
 - **The body is short.** TL;DR, sweep summary, finding counts, what's working well, Open Questions. No per-finding detail. Per-finding lives inline.
-- **Severity and confidence are separate axes.** The concurrent-refresh race is `Should-fix` / `medium` — the bug is clear from code, but impact depends on load. The token-in-log is `Consider` / `high` — a literal-string finding, not high-impact.
+- **Severity and confidence are separate axes.** The concurrent-refresh race is `Should-fix` / `medium` — the bug is clear from code, but impact depends on load. The token-in-log is `Should-fix` / `high` — a literal-string finding, and because it matches a §Security required check (sensitive data in logs), its severity floor is Should-fix per `confidence.md` — security findings never sit in the Consider/Nit buckets.
 - **Every inline comment names a concrete alternative.** "Wrap with `golang.org/x/sync/singleflight`", "Tag with `ctxKeyRefreshInFlight`" — not "consider refactoring".
 - **The Blocking inline finding drives the review event.** `event: REQUEST_CHANGES` is derived, not chosen.
 - **Sweep only lists dimensions that surfaced a finding.** Stale-training came up clean and is omitted entirely; if all five had been clean, the whole section would collapse to a single "no concerns" line.

@@ -1,6 +1,13 @@
 ---
 name: pr-review
-description: Use when the user asks to review a pull request, merge request, or a diff — "review this PR", "review PR #123", "look over these changes", "check my diff before I merge", "/review", or when they share a PR URL and ask for thoughts. Findings are posted as inline comments anchored to specific lines so the author can act on each one in place. Do NOT use for pure style/lint review, formatting-only changes, or language-specific idiom review (defer to style skills like devpilot:google-go-style).
+description: >-
+  Use when the user asks to review a pull request, merge request, or a diff —
+  "review this PR", "review PR #123", "look over these changes", "check my diff
+  before I merge", "/review", or when they share a PR URL and ask for thoughts.
+  Findings are posted as inline comments anchored to specific lines so the
+  author can act on each one in place. Do NOT use for pure style/lint review,
+  formatting-only changes, or language-specific idiom review (defer to style
+  skills like devpilot:google-go-style).
 ---
 
 # PR Review (Eligibility-Gated, Parallel-Fanout, Inline-First)
@@ -13,13 +20,13 @@ Three structural ideas drive this skill:
 
 1. **Eligibility gate** — decide the PR is worth a full review before spending tokens on it. Dependabot, drafts, generated-file PRs, "already reviewed" all stop here.
 2. **Parallel fanout** — five core subagents (A–E) plus an optional sixth (F) look at the change from independent angles in parallel. Coverage comes from diversity of angle, not depth of a single pass. The main session dispatches and merges; subagents read code. Agent F (Dependency Reality Check) is dispatched only when the dispatcher's pre-extracted dependency manifest is non-empty — it verifies imports/packages resolve on their public registry, catching hallucinated names that pass every text-based agent.
-3. **Confidence filtering** — every finding carries `Confidence: 0–100`. Findings below 70 are dropped by default. Coverage at collection, filtering at posting.
+3. **Confidence filtering** — every finding carries `Confidence: 0–100`. Findings below the threshold defined in `references/confidence.md` are dropped by default. Coverage at collection, filtering at posting.
 
 ## When NOT to Use
 
 - Pure formatting / lint / rename PRs — defer to the relevant style skill.
-- Generated-file or dependency-bump PRs with no behavior change — the eligibility gate stops here.
 - No PR, diff, or branch given — ask the user for one.
+- Everything else that shouldn't get a full review (closed, draft, automation-only, generated-only, already reviewed) is handled by the eligibility gate in step 0 — enter the skill and let the gate decide.
 
 ## Three rules that govern every finding
 
@@ -41,12 +48,16 @@ Every finding tied to a specific line goes in as an inline review comment, never
 0. Eligibility gate         → references/eligibility.md
 1. Load PR                  → gh / git / pasted patch
 1.5 Graph enrichment        → references/graph.md (preflight once; fallback OK)
-2. Parallel fanout          → references/fanout.md (5 subagents, parallel)
+2. Parallel fanout          → references/fanout.md (5 core agents in parallel, +F if deps added)
 3. Filter + merge + reconcile against graph → references/confidence.md
 4. Draft review             → references/template.md
 5. Post one combined POST   → references/posting.md
 Self-check before post      → references/rationalizations.md
 ```
+
+**Working files:** cache intermediate JSON in the session scratchpad directory with the PR number in the filename (`<scratchpad>/pr_<num>_*.json`), never in bare `/tmp` — fixed paths leak stale data between PRs and concurrent reviews.
+
+**CLI-first:** steps 0–1.5 collapse into one `devpilot pr-review preflight` call and step 5 into one `devpilot pr-review post` call when the installed devpilot supports them (`--help` exits 0) — see `references/eligibility.md` and `references/posting.md`. The manual `gh` paths in those files are the contract and the fallback; the CLI is an optimization. Steps 2–4 (fanout, filtering, drafting) are judgment work and always run in the model.
 
 ### 0. Eligibility gate
 
@@ -55,7 +66,7 @@ Before anything else, run the gate in `references/eligibility.md`. If the PR is 
 The gate also produces two outputs the later steps consume:
 
 - **Review mode** — `full` (no prior devpilot review) or `incremental` (prior review exists but head has moved; fanout runs against `last_reviewed_sha..head_sha`, not the full PR diff).
-- **Existing review comments** — `/tmp/existing_review_comments.json`, every prior inline comment on this PR from any reviewer. Used by step 3 to drop findings that duplicate an existing comment.
+- **Existing review comments** — `<scratchpad>/pr_<num>_existing_review_comments.json`, every prior inline comment on this PR from any reviewer. Used by step 3 to drop findings that duplicate an existing comment.
 
 ### 1. Load the PR
 
@@ -68,13 +79,13 @@ Or `git diff <base>...HEAD` for a local branch, or read a pasted patch directly.
 
 ### 1.5. Graph enrichment
 
-Run `devpilot graph preflight --base <base-sha> --head <head-sha>` once. Cache the JSON to `/tmp/pr_review_graph.json` and inject it into the shared header that every fanout brief sees. The payload tells subagents — before they read any code — which symbols changed, who calls each, which are hubs, which lack tests, and which cross-community edges this PR adds. Agent A's blast-radius answer comes from this payload, not from grep.
+Run `devpilot graph preflight --base <base-sha> --head <head-sha>` once. Cache the JSON to `<scratchpad>/pr_<num>_graph.json` and inject it into the shared header that every fanout brief sees. The payload tells subagents — before they read any code — which symbols changed, who calls each, which are hubs, which lack tests, and which cross-community edges this PR adds. Agent A's blast-radius answer comes from this payload, not from grep.
 
 If the graph cache is missing, the language is unsupported, or preflight fails, **fall back** to the grep-only path and note `Behavior trace: grep-only (graph unavailable: <reason>)` in the body's sweep summary. Do not auto-run `devpilot graph build`. See `references/graph.md` for the full payload schema, fallback triggers, and confidence-weighting rules.
 
 ### 2. Parallel fanout (5 core + F conditional)
 
-Dispatch all in a single message so they run in parallel. Each receives the PR metadata, the diff, and one focused brief. Each returns findings with `Confidence: 0–100` and `Severity`. See `references/fanout.md` for the prompts. Agent F is conditional: the dispatcher pre-extracts the dependency manifest per `references/import-verifier.md` → "What the dispatcher pre-extracts"; F is dispatched only when that manifest is non-empty.
+Dispatch all in a single message so they run in parallel, synchronously (`run_in_background: false`), and wait for every agent to return before step 3. Each receives the PR metadata, the diff, and one focused brief. Each returns findings with `Confidence: 0–100` and `Severity`. See `references/fanout.md` for the prompts. Agent F is conditional: the dispatcher pre-extracts the dependency manifest per `references/import-verifier.md` → "What the dispatcher pre-extracts"; F is dispatched only when that manifest is non-empty.
 
 In **incremental mode**, the diff passed to subagents is the range diff (`last_reviewed_sha..head_sha`), not the full PR diff — agents should look at the new commits only. Agent A still grounds its blast-radius checks in the full repo, but findings must be anchored to lines changed in the new commits.
 
@@ -82,7 +93,7 @@ In **incremental mode**, the diff passed to subagents is the range diff (`last_r
 |---|---|
 | A | Behavior sweep (5 blind-spot questions + behavior trace) |
 | B | Shallow bug scan on the diff + Security/Performance [REQUIRED CHECKS] coverage |
-| C | CLAUDE.md / AGENTS.md compliance |
+| C | Repo convention compliance (CLAUDE.md / AGENTS.md / cursor & copilot rules / repo skills, read-only) |
 | D | Git blame & history + comments on prior PRs touching these files |
 | E | Code comments & in-file conventions in modified files |
 | F | Dependency reality check — verifies added imports/packages resolve on public registry (conditional: only dispatched when the diff adds dependencies) |
@@ -91,7 +102,7 @@ The main session does NOT also do these passes itself. Subagent context savings 
 
 ### 3. Filter, dedupe, merge
 
-Graph-reconcile each finding (corroborated → floor 85; contradicted → cap 50) → drop `Confidence < 70` → drop matches against `eligibility.md` false-positive list, including duplicates of existing inline comments at the same anchor (from step 0) → dedupe across agents; same defect across multiple files → one consolidated comment listing the other `path:line`s → anchor each survivor to `(path, line)`. Full procedure incl. graph-injected missing-test findings: `references/confidence.md`.
+Graph-reconcile each finding (corroborated → floor 85; contradicted → cap 50) → drop findings below the confidence threshold (`references/confidence.md`) → drop matches against `eligibility.md` false-positive list, including duplicates of existing inline comments at the same anchor (from step 0) → dedupe across agents; same defect across multiple files → one consolidated comment listing the other `path:line`s → anchor each survivor to `(path, line)`. Full procedure incl. graph-injected missing-test findings: `references/confidence.md`.
 
 ### 4. Draft the review
 
@@ -124,9 +135,9 @@ See `references/posting.md` for the full `jq` build, anchor field rules (multi-l
 |---|---|
 | `references/eligibility.md` | Gate rules + false-positive list (when to skip review entirely, what to never flag). |
 | `references/graph.md` | `devpilot graph preflight` payload schema, fallback triggers, confidence-weighting rules consumed by step 3. |
-| `references/fanout.md` | Six subagent prompts (Behavior, Bug scan + sec/perf coverage, CLAUDE.md, Git history, In-file comments, Dependency reality) — A–E receive the graph payload; F receives the pre-extracted dependency manifest. |
+| `references/fanout.md` | Subagent prompts A–F (Behavior, Bug scan + sec/perf coverage, Repo conventions, Git history, In-file comments, Dependency reality) — A–E receive the graph payload; F receives the pre-extracted dependency manifest. |
 | `references/import-verifier.md` | Agent F spec: per-ecosystem registry-check commands (Go / npm / Python / Rust), finding shape, typosquat heuristic, fallback rules. |
-| `references/confidence.md` | 0–100 rubric, threshold 70, severity vs. confidence axes, dedupe rules, graph reconciliation. |
+| `references/confidence.md` | 0–100 rubric, tiered thresholds by severity, security severity floor, severity vs. confidence axes, dedupe rules, graph reconciliation. |
 | `references/unknown-unknowns.md` | Behavior sweep details — Agent A's playbook. |
 | `references/checklist.md` | Quality dimensions referenced by Agent B's bug scan and Agent A's checklist tail. |
 | `references/template.md` | Inline comment template + review body template (Verdict, Strengths, sweep, counts) + tone/stance/language rules. |

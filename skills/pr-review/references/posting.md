@@ -2,6 +2,23 @@
 
 Default flow: show the user the drafted body and the inline comments, then post **everything in a single combined POST** to GitHub's review API. Body + inline comments + event in one call so they show up grouped under one review (not as standalone PR comments).
 
+## CLI-first: one post call replaces the manual jq build
+
+If the devpilot CLI supports it (`devpilot pr-review post --help` exits 0), write the findings and body to files and post with ONE command instead of hand-building the jq payload:
+
+```bash
+devpilot pr-review post "$url" \
+  --findings "$SCRATCH/pr_${num}_findings.json" \
+  --body "$SCRATCH/pr_${num}_body.md" \
+  --event "$event"
+```
+
+The CLI validates every anchor against the diff at head SHA (the 422 pre-check), handles quoting/newline escaping, and issues the single combined POST. On any validation error it prints which finding failed and posts nothing — fix and re-run.
+
+**Fallback:** if the subcommand is missing, use the manual `jq` + `gh api` path below. The manual path is the contract; the CLI is an optimization of it.
+
+## Manual path (fallback)
+
 ## GitHub — single combined POST
 
 Build a JSON payload and pipe it to `gh api --input -`:
