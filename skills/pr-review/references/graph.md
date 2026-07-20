@@ -16,7 +16,7 @@ bin/devpilot graph preflight --base <base-sha> --head <head-sha>
 
 For an incremental re-review (see eligibility.md), pass `--base <last_reviewed_sha> --head <head_sha>` instead of PR base.
 
-Cache the JSON to `/tmp/pr_review_graph.json`.
+Cache the JSON to `$SCRATCH/pr_${num}_graph.json`.
 
 ## Fallback triggers (skip graph, fall through to grep)
 
@@ -69,7 +69,7 @@ Do **not** auto-run `devpilot graph build` — the build can be slow and the use
 | `changed_symbols[].callers.in_hub` | If `true`, Agent A escalates that symbol's review and notes it in `sweep_summary.blast_radius`. |
 | `changed_symbols[].tests` | Agent A and Agent B both consult. `has_tests:false` on an exported behavior change is a Should-fix finding. |
 | `changed_symbols[].risk_factors` | `untested_public`, `hub`, `interface_change` — each gates a specific finding pattern. |
-| `cross_community_edges` | Agent A's "is this PR widening the contract between two packages?" question. New cross-community edges in an internal-only PR are a Consider-level finding. |
+| `cross_community_edges` | Agent A's "is this PR widening the contract between two packages?" question. A Consider-level finding only when the edge reverses the repo's existing dependency direction AND is unmentioned in the PR description; at most one consolidated finding per review (see fanout.md Agent A step 3). Otherwise a sweep-summary line. |
 | `risk_summary.untested_public_changes` | Aggregate count for the body's sweep summary. |
 | `risk_summary.interface_changes` | If > 0, Agent A traces implementors via `graph context --id <iface>`. |
 

@@ -6,7 +6,7 @@ The dispatcher pre-extracts the candidate identifiers from the diff and hands th
 
 ## What the dispatcher pre-extracts (input to Agent F)
 
-Before dispatching Agent F, the main session walks the diff and assembles:
+When `devpilot pr-review preflight` ran (CLI-first path), the manifest below comes ready-made in its output JSON (`dependency_manifest` field) — do not re-extract. Otherwise the main session walks the diff and assembles:
 
 ```json
 {

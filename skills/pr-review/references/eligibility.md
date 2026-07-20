@@ -1,6 +1,20 @@
 # Eligibility Gate and False-Positive List
 
-Run this gate **before** dispatching the fanout. It is cheap (one or two `gh` calls + a glance at the diff) and prevents wasting tokens on PRs that don't benefit from a full review.
+Run this gate **before** dispatching the fanout. It is cheap and prevents wasting tokens on PRs that don't benefit from a full review.
+
+## CLI-first: one preflight call replaces the manual gate
+
+If the devpilot CLI supports it (`devpilot pr-review preflight --help` exits 0), run the entire gate + data collection as ONE command instead of the manual `gh` sequence below:
+
+```bash
+devpilot pr-review preflight "$url" --out "$SCRATCH/pr_${num}_preflight.json"
+```
+
+The output JSON carries everything steps 0–1.5 need: `gate.decision` (proceed / stop with reason), `review_mode` (full / incremental + `last_reviewed_sha`), PR metadata, the diff written to a file path (not inlined), existing review comments, the graph preflight payload, and the pre-extracted dependency manifest for Agent F. Trust its gate decision and skip the rest of this file's command blocks — the false-positive list below still applies at filter time.
+
+**Fallback:** if the subcommand is missing (older devpilot, or not installed), run the manual path below. The manual path is the contract; the CLI is an optimization of it.
+
+## Manual path (fallback)
 
 ## Gate: when to stop and not review
 
@@ -23,14 +37,18 @@ If none apply, proceed to the fanout.
 A prior devpilot review is **not** a stop condition on its own — only a stop condition when the PR head has not moved since. Resolve it with:
 
 ```bash
+# $SCRATCH = the session scratchpad directory; $num = the PR number.
+# Filenames carry the PR number so concurrent/successive reviews never read stale data.
 head_sha=$(gh pr view "$url" --json headRefOid -q .headRefOid)
 
 # Pull every review you (devpilot) have left, newest first, with its commit_id.
-gh pr view "$url" --json reviews \
-  -q '[.reviews[] | select(.body | test("<!-- devpilot:pr-review"))] | sort_by(.submittedAt) | reverse | .[0] // empty' \
-  > /tmp/last_devpilot_review.json
+# NOTE: must use the REST endpoint — `gh pr view --json reviews` (GraphQL) has no
+# `commit_id` field, which silently breaks incremental re-review detection.
+gh api "repos/$owner/$repo/pulls/$num/reviews" \
+  --jq '[.[] | select(.body | test("<!-- devpilot:pr-review"))] | sort_by(.submitted_at) | reverse | .[0] // empty' \
+  > "$SCRATCH/pr_${num}_last_devpilot_review.json"
 
-last_reviewed_sha=$(jq -r '.commit_id // empty' /tmp/last_devpilot_review.json)
+last_reviewed_sha=$(jq -r '.commit_id // empty' "$SCRATCH/pr_${num}_last_devpilot_review.json")
 ```
 
 Decision:
@@ -46,7 +64,7 @@ In incremental mode, also load every existing review comment on the PR (from any
 ```bash
 gh api "repos/$owner/$repo/pulls/$num/comments" \
   --jq '[.[] | {path, line, side, body, user: .user.login, commit_id}]' \
-  > /tmp/existing_review_comments.json
+  > "$SCRATCH/pr_${num}_existing_review_comments.json"
 ```
 
 ## False-positive list (filtered out at step 3, not surfaced)
@@ -54,7 +72,7 @@ gh api "repos/$owner/$repo/pulls/$num/comments" \
 These never become inline findings. Subagents may surface them; the main session drops them before drafting. Match against this list explicitly when filtering.
 
 - **Pre-existing issues** — the defect already existed on the base branch. Not this PR's job.
-- **Already raised by an existing review comment** — if any comment in `/tmp/existing_review_comments.json` (devpilot's prior runs or another reviewer) anchors at the same `(path, line)` (±3 lines) and discusses the same defect, drop the new finding. Exception: the existing comment was marked resolved/outdated by a later commit and the defect is still present — then it's in scope, and the new comment must reference the prior one ("re-raising — still present after `<short_sha>`"). Treat the existing-comments file as authoritative; do not re-post the same defect to spare the author another notification.
+- **Already raised by an existing review comment** — if any comment in `$SCRATCH/pr_${num}_existing_review_comments.json` (devpilot's prior runs or another reviewer) anchors at the same `(path, line)` (±3 lines) and discusses the same defect, drop the new finding. Exception: the existing comment was marked resolved/outdated by a later commit and the defect is still present — then it's in scope, and the new comment must reference the prior one ("re-raising — still present after `<short_sha>`"). Treat the existing-comments file as authoritative; do not re-post the same defect to spare the author another notification.
 - **Lines the PR did not modify** — even if buggy, not in scope. Exception: the PR's change makes the line reachable / hot for the first time; then it is in scope and the comment must say so.
 - **Linter / typechecker / compiler-catchable issues** — missing imports, type errors, formatting, unused-var warnings. CI runs separately; do not duplicate.
 - **Broken tests / failing CI** — surfaced separately; not a review finding.
@@ -65,7 +83,7 @@ These never become inline findings. Subagents may surface them; the main session
 - **Changes obviously intentional and directly part of the PR's stated purpose**, even if they "look like" a change.
 - **Suggestions to add features the PR did not aim to add** — scope creep on the reviewer's side.
 
-Findings that survive this list AND have `Confidence ≥ 70` go inline. Everything else is dropped silently.
+Findings that survive this list AND clear the tiered confidence thresholds in `confidence.md` go inline. Everything else is dropped silently.
 
 ## Edge case: PR description missing or empty
 

@@ -67,14 +67,10 @@ A review that reaches "LGTM" without tracing at least one input through at least
 
 ## Output format
 
-Each question gets one line in the body's `### Unknown-Unknowns Sweep` section:
+All five questions MUST be answered internally — "N/A, because X" is a valid answer, a silent skip is not. Rendering in the review body follows `template.md` → "Unknown-Unknowns Sweep": list only the dimensions that surfaced a real finding; if all five are clean, collapse to the single "no concerns" line. Do not render five boilerplate lines.
 
-```
-1. Local pattern fit: <finding or "matches convention in X">
-2. Blast radius: <finding>
-3. Known pitfalls (incl. security/data/reversibility): <finding>
-4. Stale-training check: <finding or "N/A">
-5. Hand-rolled vs. off-the-shelf: <finding or "N/A">
-```
+**When does a sweep answer also become an inline finding?**
 
-A question that names a concrete defect (e.g. "blast radius: every call through `RoundTrip` is affected, including `internal/api/users.go:42`") is also a finding — write it once in the sweep summary, then attach an inline comment to each affected line so the author can act on it.
+- Questions 2 (blast radius) and 3 (known pitfalls): a concrete defect (e.g. "every call through `RoundTrip` is affected, including `internal/api/users.go:42`") gets one line in the sweep summary AND an inline comment on each affected line.
+- Questions 1 (pattern fit) and 5 (hand-rolled): these produce subjective design opinions by nature. Default destination is the sweep-summary line ONLY. Promote to an inline finding only when you can name both a specific line AND a specific existing alternative (the helper, package, or dependency already in the repo — e.g. "`internal/retry` already exists; this hand-writes backoff at client.go:88"). "This diverges from convention" without a named alternative stays in the body.
+- Question 4 (stale-training): corrects the reviewer's own knowledge; it changes other findings' content rather than producing findings itself.
