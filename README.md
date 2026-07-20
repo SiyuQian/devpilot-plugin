@@ -46,6 +46,30 @@ claude plugin install devpilot@devpilot-marketplace
 | `devpilot:confluence-reviewer` | Review Confluence docs |
 | `devpilot:trello` | Trello card workflows (uses devpilot CLI credential store) |
 
+## Commands
+
+Thin slash-command entry points for the high-traffic skills (each just invokes the corresponding skill):
+
+| Command | Skill |
+|---|---|
+| `/pr-review` | `devpilot:pr-review` |
+| `/pr` | `devpilot:pr-creator` |
+| `/repo-scan` | `devpilot:scanning-repos` |
+| `/resolve-issues` | `devpilot:resolve-issues` |
+| `/dead-code` | `devpilot:dead-code-cleanup` |
+
+## Agents
+
+The pr-review parallel fanout is implemented as six dedicated plugin agents (`agents/pr-review-*.md`), each with a fixed system prompt and a read-only tool whitelist: `pr-review-behavior-sweep`, `pr-review-bug-scan`, `pr-review-conventions`, `pr-review-git-history`, `pr-review-in-file-comments`, `pr-review-dependency-check`. They are dispatched by `devpilot:pr-review` and are not meant for standalone use.
+
+## Validation
+
+CI runs `scripts/validate.py` on every push/PR — plugin manifest JSON, skill/agent/command frontmatter, `devpilot:<skill>` cross-references, and README skill-table drift. Run it locally with `python3 scripts/validate.py` (needs PyYAML).
+
+## Licensing
+
+The plugin packaging is MIT. Several skills (`clean-code-principles`, `confluence-reviewer`, `content-creator`, `google-go-style`, `learn`, `news-digest`, `pm`, `pr-creator`, `prd-to-issues`, `product-research`, `trello`) derive from Apache-2.0-licensed upstream skill sources; that license is included once at the repo root as `LICENSE-APACHE-2.0.txt`.
+
 ## Relationship to the devpilot repo
 
 The original [devpilot](https://github.com/SiyuQian/devpilot) repo remains the home of the Go CLI (`devpilot gmail/slack/trello/graph` helpers). Some skills (`trello`, `scanning-repos`) shell out to that CLI when it is installed; they degrade gracefully without it.

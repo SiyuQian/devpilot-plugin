@@ -43,7 +43,7 @@ eval loop ("Running and evaluating test cases"). In short:
    and open the eval viewer for the qualitative read.
 
 Run outputs belong in a sibling workspace
-(`devpilot:harness-engineering-workspace/`, organized by `iteration-N/eval-<id>/`),
+(a `harness-engineering-workspace/` directory next to the repo, organized by `iteration-N/eval-<id>/`),
 **not** committed here.
 
 ## Reading the results

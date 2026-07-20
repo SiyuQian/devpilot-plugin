@@ -8,8 +8,7 @@
   "plugins": [
     {
       "name": "devpilot",
-      "source": "./",
-      "description": "DevPilot workflow catalog: PR review/creation, repo scanning, issue triage & resolution, PRD decomposition, code style, content creation, and daily productivity skills."
+      "source": "./"
     }
   ]
 }
