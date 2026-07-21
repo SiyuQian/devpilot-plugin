@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 — 2026-07-21
+
+- **New SessionStart hook** (`hooks/hooks.json` + `scripts/refresh-default-branch.sh`):
+  on every session start, keeps the local default branch up to date with the
+  remote without touching the current branch or working tree. On a feature
+  branch it fast-forwards the local default ref via refspec (no checkout); on a
+  clean default branch it `--ff-only` updates; on a dirty tree it skips and
+  prints a hint. Ships with the plugin, so every install gets it.
+
 ## 1.2.0 — 2026-07-21
 
 - **New skill `devpilot:pr-guard`** + `/pr-guard` command: after a PR/MR exists,
