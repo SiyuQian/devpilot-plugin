@@ -22,6 +22,7 @@ claude plugin install devpilot@devpilot-marketplace
 |---|---|
 | `devpilot:pr-review` | Review a PR/diff, post inline comments |
 | `devpilot:pr-creator` | Create or update pull requests |
+| `devpilot:pr-guard` | Watch a PR until it's mergeable and CI is green (resolves conflicts, fixes failing checks) |
 | `devpilot:pr-review-queue` | Work through a queue of open PRs |
 | `devpilot:resolving-review-threads` | Respond to inline review comments after pushing fixes |
 | `devpilot:scanning-repos` | Full-repo audit (security, edge cases, coverage, doc drift) → GitHub issues |
@@ -54,6 +55,7 @@ Thin slash-command entry points for the high-traffic skills (each just invokes t
 |---|---|
 | `/pr-review` | `devpilot:pr-review` |
 | `/pr` | `devpilot:pr-creator` |
+| `/pr-guard` | `devpilot:pr-guard` |
 | `/repo-scan` | `devpilot:scanning-repos` |
 | `/resolve-issues` | `devpilot:resolve-issues` |
 | `/dead-code` | `devpilot:dead-code-cleanup` |

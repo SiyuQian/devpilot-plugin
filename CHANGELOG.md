@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 — 2026-07-21
+
+- **New skill `devpilot:pr-guard`** + `/pr-guard` command: after a PR/MR exists,
+  drives it to a mergeable, green state — polls CI/GitHub Actions, resolves merge
+  conflicts against the base branch (merge, never force-push), reads failing-check
+  logs, applies scoped fixes, pushes, and re-polls in a bounded loop with
+  no-progress and round caps. Hard-stops on semantic conflicts, missing
+  secrets/approvals, or required human review.
+- `devpilot:pr-creator` now documents an optional hand-off to `devpilot:pr-guard`
+  after creating a PR.
+
 ## 1.1.0 — 2026-07-21
 
 - **agents/**: the six pr-review fanout briefs (A–F) are now plugin agent

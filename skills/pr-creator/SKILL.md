@@ -172,6 +172,13 @@ gh pr create --title "..." --body "..."    # GitHub
 glab mr create --title "..." --description "..."  # GitLab
 ```
 
+**Optional hand-off — drive the PR to green.** Creating the PR does not guarantee it is
+mergeable or that CI passes. If the user asked to "make sure CI passes," "keep it green,"
+or "get it merged" — or you are in autonomous mode and the parent wants a mergeable result —
+hand off to `devpilot:pr-guard` with the new PR number. It polls checks, resolves merge
+conflicts against the base, fixes failing checks, and re-polls in a bounded loop. Do not
+inline that logic here; this skill's job ends at a created/updated PR with its URL reported.
+
 ## Update an Existing PR/MR
 
 When preflight finds an open PR for the current branch, or the user explicitly asks to update:
