@@ -100,6 +100,40 @@ Derive deterministically — do not ask:
 3. If `git log HEAD..origin/<branch>` is non-empty, stop — the remote diverged. Reconcile by inspecting; never force-push.
 4. Otherwise `git push -u origin HEAD` will fast-forward (or be a no-op). Then create the PR normally.
 
+## gh Account Consistency (multi-account / EMU environments)
+
+**`git push` succeeding does NOT mean `gh` can create the PR.** They use different auth paths:
+- `git push` goes over SSH; a host alias in the remote URL (`github-personal:`, `github-emu:`) selects the key. It knows nothing about `gh`.
+- `gh pr create` goes over the HTTPS API using **gh's own single "active" account token** — unrelated to the SSH alias. When multiple accounts are logged in under the same host (common with a work/EMU account plus a personal account, both under `github.com`), gh keeps only ONE active account and has no built-in "switch by remote." If the active account can't see the target repo, you get:
+
+```
+GraphQL: Could not resolve to a Repository with the name 'OWNER/REPO'. (repository)
+```
+
+This almost always means **the active gh account is wrong**, NOT that the repo is missing.
+
+**Preflight consistency check (best-effort, warn-only — never mutate global gh state without cause).** Only bother when `gh auth status` shows more than one account for the host; a single-account setup can't hit this, so skip it:
+
+```bash
+git remote get-url origin        # extract target OWNER/repo (works through SSH host aliases too)
+gh api user -q .login            # current active gh account
+gh auth status                   # list all logged-in accounts and hosts
+```
+
+If the origin owner ≠ the active login and the owner isn't an org the active account has access to, warn: "gh active account may not be able to create this PR."
+
+**On `Could not resolve to a Repository` — do not give up. Auto-recover once:**
+1. Run `gh auth status`. If only one account is logged in, this is a genuine access/permission issue — skip to step 3. If multiple accounts exist, try to match one to the target owner.
+2. Switch to that account and retry the `gh pr create` **once**. Use the host from `git remote get-url origin` (e.g. `github.com`, or a GitHub Enterprise Server host), not a hardcoded one:
+   ```bash
+   gh auth switch --hostname <host> --user <login>
+   ```
+3. If it still fails, report: "Confirm you're logged into a gh account with access to `OWNER/REPO` (`gh auth login`)." Do not conclude the repo doesn't exist.
+
+In autonomous mode, prefer switching back to the original active account after creating the PR so you don't leave the user's global gh state changed unexpectedly (note the switch in your report either way).
+
+**GitLab (`glab`) equivalent:** the same principle holds — `glab` uses its own configured token, independent of the SSH remote. Multi-account is rarer, but if `glab mr create` returns a not-found/permission error on a repo you can push to, the configured `glab` token is the likely cause (`glab auth status` / `glab auth login`), not a missing project.
+
 ## Read the Diff (Required)
 
 ```bash
@@ -220,6 +254,8 @@ glab mr update <number> --draft=false  # GitLab
 | Stopping to ask "should I create a feature branch?" when on main | Don't. Auto-create per [Auto-recover: on main](#auto-recover-on-mainmaster). The only main-related stop is when the work was already pushed to `origin/main` |
 | Stopping to "show the draft for approval" before creating | Don't. Create directly; user edits after via `gh pr edit` |
 | Asking the user to pick a branch name | Derive it per [Branch naming](#branch-naming). Don't prompt |
+| Treating `Could not resolve to a Repository` as "repo doesn't exist" | In multi-account/EMU setups it means the wrong gh account is active. `gh auth switch` to the owner's account and retry once — see [gh Account Consistency](#gh-account-consistency-multi-account--emu-environments) |
+| Assuming `git push` success means `gh pr create` will work | Different auth paths (SSH key vs gh active-account HTTPS token). A working push says nothing about gh API access |
 
 ## Red Flags — you are over-confirming
 
