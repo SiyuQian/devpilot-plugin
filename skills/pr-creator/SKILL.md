@@ -33,8 +33,19 @@ Detect both up front — they change preflight rules.
 
 ```bash
 git rev-parse --git-dir            # contains "/worktrees/" → you are in a linked worktree
-git worktree list                  # confirms which worktree is which
+git worktree list                  # confirms which worktree is which, and which branch each has checked out
 ```
+
+**Resolve `<default-branch>` first — do not hardcode `main`.** Every command below writes
+`origin/<default-branch>`; you must compute the real name, because a fork or a fresh worktree
+may not default to `main`:
+
+```bash
+git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null   # → origin/main → default branch is "main"
+```
+
+If that prints nothing, `origin/HEAD` is not set (common in worktrees / shallow clones). Set it
+once, then re-read: `git remote set-head origin -a`. Only if it still fails, fall back to `main`.
 
 **You are in autonomous mode** when this skill was invoked by a parent skill (e.g. `devpilot:resolve-issues`, `devpilot:auto-feature`) rather than directly by a human. In autonomous mode:
 - The "stop and ask the user" gates below become "return control to the parent with the question" — never deadlock waiting for human input that isn't coming.
@@ -65,7 +76,7 @@ If `HEAD` is on `main`/`master`, **do not stop** — recover automatically:
 
 1. Confirm none of the local commits ahead of base have been pushed to `origin/main`. If `git log origin/main..HEAD` is empty AND the working tree is clean, there is nothing to PR — exit. If commits ahead of base have **already been pushed to origin/main**, stop: the PR window has passed (see Hard Stops).
 2. Pick a feature branch name (see [Branch naming](#branch-naming)).
-3. `git checkout -b <name>` — this carries any uncommitted changes onto the new branch and leaves `main` untouched.
+3. `git checkout -b <name>` — this carries any uncommitted changes onto the new branch and leaves `main` untouched. `-b` creates a fresh name, so it is worktree-safe. If git errors with `'<name>' is already checked out at '<other worktree>'`, the derived name collides with a branch live in a sibling worktree — pick the next suffix (`-2`, `-3`) and retry; never `--force` a checkout to steal it.
 4. If there are uncommitted changes that belong in the PR, `git add` the relevant files (those whose paths overlap the intended PR scope) and commit with a conventional-commit message derived from the diff. Leave unrelated dirty files alone.
 5. Continue with the normal flow.
 
@@ -92,7 +103,7 @@ Derive deterministically — do not ask:
 
 1. If there are commits ahead of base, parse the latest commit subject. Take its conventional prefix (`feat`, `fix`, `chore`, `docs`, `refactor`) and slugify the rest: `<type>/<kebab-slug>` (max ~50 chars).
 2. Otherwise (only uncommitted changes), pick the prefix from the change shape — `fix:` for bug language in modified code, `docs:` for `.md`-only, `chore:` for config/tooling, else `feat:`. Slug from the most-changed top-level directory or filename stem.
-3. If a branch by that name already exists locally, append `-2`, `-3`, etc.
+3. If a branch by that name already exists locally, **or is checked out in another worktree** (`git worktree list`), append `-2`, `-3`, etc. A branch live in a sibling worktree cannot be checked out here.
 
 **Branch already on origin, but no open PR** (common after a draft-escalation push from `devpilot:resolve-issues`):
 1. Only enter this branch if `git ls-remote --heads origin <branch>` returned a SHA. If it was empty, skip — `git push -u origin HEAD` will create the remote ref normally.
@@ -256,6 +267,8 @@ glab mr update <number> --draft=false  # GitLab
 | Creating duplicate PR for branch with existing PR | Check `gh pr list --head <branch>` first — update instead |
 | Blocking on untracked/unstaged files unrelated to the PR | Only block when the dirty files appear in `origin/<base>...HEAD`. Untracked debris in a worktree is common and already excluded |
 | Diffing against local `main` in a worktree | Local `main` may be stale or absent in a worktree — always use `origin/<default-branch>` |
+| Hardcoding `main` as the base | Resolve it: `git symbolic-ref --short refs/remotes/origin/HEAD` (set with `git remote set-head origin -a` if empty). A fork may not default to `main` |
+| Checking out a branch already live in another worktree | git refuses with `already checked out at ...`. Bump the branch suffix (`-2`, `-3`); never `--force` the checkout |
 | Force-pushing because the branch already exists on origin | Fetch first; if remote diverged, reconcile, never force. Fast-forward push is fine |
 | Appending to PR description instead of rewriting | Re-read the full diff and write a cohesive description covering all commits |
 | Stopping to ask "should I create a feature branch?" when on main | Don't. Auto-create per [Auto-recover: on main](#auto-recover-on-mainmaster). The only main-related stop is when the work was already pushed to `origin/main` |
