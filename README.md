@@ -46,6 +46,7 @@ claude plugin install devpilot@devpilot-marketplace
 | `devpilot:daily-toolkit` | Daily productivity toolkit |
 | `devpilot:confluence-reviewer` | Review Confluence docs |
 | `devpilot:trello` | Trello card workflows (uses devpilot CLI credential store) |
+| `devpilot:grilling` | Stress-test a plan or decision by interviewing you one question at a time |
 
 ## Commands
 
@@ -59,6 +60,7 @@ Thin slash-command entry points for the high-traffic skills (each just invokes t
 | `/repo-scan` | `devpilot:scanning-repos` |
 | `/resolve-issues` | `devpilot:resolve-issues` |
 | `/dead-code` | `devpilot:dead-code-cleanup` |
+| `/grill` | `devpilot:grilling` |
 
 ## Agents
 
