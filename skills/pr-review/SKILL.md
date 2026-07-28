@@ -60,7 +60,7 @@ Self-check before post      → references/rationalizations.md
 **No hard dependency on the devpilot CLI.** Two different relationships to that binary, do not conflate them:
 
 - **Steps 0 and 5 are CLI-*optional*.** They collapse into one `devpilot pr-review preflight` / `devpilot pr-review post` call when the installed devpilot supports them (`--help` exits 0). The manual `gh` paths in `references/eligibility.md` and `references/posting.md` are the contract and the fallback; the CLI is a token optimization and nothing is lost without it.
-- **Step 1.5 is CLI-*bootstrapped*.** The graph is a real capability, not a shortcut, so when the binary is missing the skill offers to install it rather than shrugging. All graph access goes through `${CLAUDE_PLUGIN_ROOT}/scripts/codegraph.sh`, which resolves, installs (with consent), and indexes. **Never invoke `devpilot graph` directly.**
+- **Step 1.5 is CLI-*bootstrapped*, and its CLI is not devpilot.** The graph comes from [CodeGraph](https://github.com/colbymchenry/codegraph) (tree-sitter, 20+ languages, no build manifest required). It is a real capability, not a shortcut, so when the CLI is missing the skill offers to install it rather than shrugging. All graph access goes through `${CLAUDE_PLUGIN_ROOT}/scripts/codegraph.sh`, which resolves, installs (with consent), indexes, and synthesizes the preflight payload. **Never invoke `codegraph` directly.**
 
 Steps 2–4 (fanout, filtering, drafting) are judgment work and always run in the model.
 
@@ -89,17 +89,19 @@ Only when the PR touches a graph-supported language (Go, TypeScript/JavaScript, 
 ```bash
 CG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh"
 "$CG" ensure --repo .                                   # safe unattended: never installs, never prompts
-"$CG" -- preflight --base <base-sha> --head <head-sha>   # when ensure says action=ready
+"$CG" -- preflight --repo . --base <base-sha> --head <head-sha>   # when ensure says action=ready
 ```
 
 Cache the preflight JSON to `<scratchpad>/pr_<num>_graph.json` and inject it into the shared header that every fanout brief sees. The payload tells subagents — before they read any code — which symbols changed, who calls each, which are hubs, which lack tests, and which cross-community edges this PR adds. Agent A's blast-radius answer comes from this payload, not from grep.
 
-**When the binary isn't installed** (`action: needs_install`), do not silently degrade — that is the whole point of this step. Tell the user what the graph buys them and what it costs (~28 MB download into `~/.local/bin`, checksum-verified by devpilot's official installer, a few seconds to index), and ask once:
+**When the CLI isn't installed** (`action: needs_install`), do not silently degrade — that is the whole point of this step. Tell the user what the graph buys them and what it costs (~57 MB download unpacking to ~280 MB under `~/.codegraph`, launcher in `~/.local/bin`, a few seconds to index, telemetry off, index excluded from their `git status`), and ask once:
 
 - Yes → `"$CG" install --yes --repo .`, then continue with the graph.
 - No → `"$CG" opt-out --repo .`, which records the refusal so **no future review in this repo asks again**, then fall back to grep.
 
-For any other non-`ready` action (`declined`, `build_failed`, `unsupported_platform`, `install_failed`), **fall back** to the grep-only path and note `Behavior trace: grep-only (graph unavailable: <reason>)` in the body's sweep summary, quoting the wrapper's `reason` verbatim. `ensure` auto-builds a cold cache — the old "do not auto-run `graph build`" rule now lives inside the wrapper. See `references/graph.md` for the action table, full payload schema, fallback triggers, and confidence-weighting rules.
+For any other non-`ready` action (`declined`, `build_failed`, `unsupported_platform`, `install_failed`), **fall back** to the grep-only path and note `Behavior trace: grep-only (graph unavailable: <reason>)` in the body's sweep summary, quoting the wrapper's `reason` verbatim. `ensure` auto-builds a cold index — the old "do not auto-run `graph build`" rule now lives inside the wrapper.
+
+**Read `callers.confident` before quoting any caller count.** `false` means the count is a graded upper bound (name collision, unresolved call sites, or cross-package method binding), not a fact — it steers where you look but must never become a claim in a finding, and it can never contradict one. See `references/graph.md` for the action table, full payload schema, the caveat semantics, fallback triggers, and confidence-weighting rules.
 
 ### 2. Parallel fanout (5 core + F conditional)
 

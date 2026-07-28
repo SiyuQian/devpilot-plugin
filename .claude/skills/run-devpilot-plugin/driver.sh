@@ -13,16 +13,17 @@
 #      whether the prose actually steers the model. Prose that reads fine and
 #      steers wrong is this repo's characteristic bug; only this layer catches it.
 #
-# Everything is sandboxed: DEVPILOT_HOME points at a temp dir, so no run ever
-# reads or writes the user's real graph cache at ~/.devpilot, and no run ever
+# Everything is sandboxed: the CodeGraph index lives inside the generated fixture
+# repo (`$FIXTURE/.codegraph`), never in a repo you care about, and no run ever
 # installs into a real bin dir unless you explicitly ask for `install-live`.
+# CODEGRAPH_TELEMETRY/CODEGRAPH_NO_DAEMON are forced off by codegraph.sh itself.
 #
 # Usage:
 #   driver.sh smoke                     # validate + codegraph  (no API cost)
 #   driver.sh validate                  # scripts/validate.py
 #   driver.sh fixture                   # build the Go fixture repo, print refs
-#   driver.sh codegraph                 # 8 assertions on the wrapper
-#   driver.sh install-live              # REAL 28MB download into the sandbox
+#   driver.sh codegraph                 # 11 assertions on the wrapper
+#   driver.sh install-live              # REAL ~57MB bundle download into the sandbox
 #   driver.sh headless present|missing|declined ["extra prompt"]
 #   driver.sh smoke-full                # smoke + all three headless probes
 #   driver.sh clean                     # remove the sandbox
@@ -36,7 +37,9 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 SANDBOX=${DRIVER_SANDBOX:-/tmp/devpilot-plugin-driver}
 FIXTURE="$SANDBOX/fixture"
 WORKSPACE="$SANDBOX/workspace"
-export DEVPILOT_HOME="$SANDBOX/devpilot-home"
+# The index is per-repo (inside $FIXTURE), so "wipe the cache" means rm -rf that
+# directory — there is no global cache dir to redirect any more.
+FIXTURE_INDEX="$FIXTURE/.codegraph"
 
 CG="$ROOT/scripts/codegraph.sh"
 PASS=0
@@ -162,13 +165,12 @@ cmd_validate() {
 # --- codegraph ---------------------------------------------------------------
 cmd_codegraph() {
   head2 "scripts/codegraph.sh state machine (sandboxed)"
-  rm -rf "$DEVPILOT_HOME"
   cmd_fixture >/dev/null
 
   # 1. No binary anywhere → needs_install (or unsupported_platform off the
-  #    three published triples — accept either, they are both correct answers).
+  #    published triples — accept either, they are both correct answers).
   local json got
-  json=$(DEVPILOT_BIN=/nonexistent/devpilot bash "$CG" status --repo "$FIXTURE" 2>/dev/null)
+  json=$(CODEGRAPH_BIN=/nonexistent/codegraph bash "$CG" status --repo "$FIXTURE" 2>/dev/null)
   got=$(printf '%s' "$json" | tail -1 | jget action)
   case $got in
     needs_install | unsupported_platform) ok "no binary → $got" ;;
@@ -184,7 +186,7 @@ cmd_codegraph() {
 
   # Remaining checks need a real binary. Skip loudly rather than silently.
   if ! bash "$CG" status --repo "$FIXTURE" >/dev/null 2>&1; then
-    say "  (no devpilot binary resolvable; run 'driver.sh install-live' for the rest)"
+    say "  (no codegraph CLI resolvable; run 'driver.sh install-live' for the rest)"
     return
   fi
   local resolved
@@ -194,22 +196,29 @@ cmd_codegraph() {
     return
   fi
   if [ "$resolved" = "needs_install" ] || [ "$resolved" = "unsupported_platform" ]; then
-    say "  (no devpilot installed: '$resolved'. Run 'driver.sh install-live' for the rest.)"
+    say "  (no codegraph installed: '$resolved'. Run 'driver.sh install-live' for the rest.)"
     return
   fi
 
-  # 3. Binary present, cache never built → needs_build.
-  rm -rf "$DEVPILOT_HOME"
-  assert_action "cold cache" needs_build \
+  # 3. Binary present, index never built → needs_build.
+  rm -rf "$FIXTURE_INDEX"
+  assert_action "cold index" needs_build \
     "$(bash "$CG" status --repo "$FIXTURE" 2>/dev/null)"
 
   # 4. ensure builds it → ready. This is the reversed "never auto-build" rule.
-  assert_action "ensure builds cold cache" ready \
+  assert_action "ensure builds cold index" ready \
     "$(bash "$CG" ensure --repo "$FIXTURE" 2>/dev/null)"
 
-  # 5. Second ensure is a no-op → still ready.
+  # 5. Second ensure re-syncs and stays ready (it does NOT skip the sync).
   assert_action "ensure idempotent" ready \
     "$(bash "$CG" ensure --repo "$FIXTURE" 2>/dev/null)"
+
+  # 5b. The index must not dirty the repo under review.
+  if [ -n "$(git -C "$FIXTURE" status --porcelain 2>/dev/null)" ]; then
+    bad "indexing dirtied the fixture: $(git -C "$FIXTURE" status --porcelain | head -1)"
+  else
+    ok "index excluded from git status (.git/info/exclude)"
+  fi
 
   # 6. Passthrough returns a real preflight payload, not just an exit code.
   local pf
@@ -227,19 +236,37 @@ hello=[s for s in syms if s["id"].endswith("::Hello")]
 if data.get("mode")!="built": print("mode="+str(data.get("mode")))
 elif not hello: print("Hello symbol absent")
 elif (hello[0].get("callers") or {}).get("count")!=1: print("caller count wrong")
+elif not (hello[0].get("callers") or {}).get("confident"): print("caller set should be confident here")
 elif "untested_public" not in (hello[0].get("risk_factors") or []): print("risk_factors missing untested_public")
 else: print("ok")
 ' 2>/dev/null)
   [ "$verdict" = "ok" ] \
-    && ok "preflight payload: mode=built, Hello has 1 caller + untested_public" \
+    && ok "preflight payload: mode=built, Hello has 1 confident caller + untested_public" \
     || bad "preflight payload wrong: $verdict"
+
+  # 6b. A stale index must fail closed rather than report stale line numbers.
+  printf '\n// appended after indexing\nfunc Unindexed() {}\n' \
+    >>"$FIXTURE/internal/greet/greet.go"
+  git -C "$FIXTURE" add -A
+  git -C "$FIXTURE" -c user.email=t@t -c user.name=t commit -qm stale
+  local stale_mode
+  stale_mode=$(bash "$CG" -- preflight --repo "$FIXTURE" \
+        --base "$(git -C "$FIXTURE" rev-parse HEAD~1)" \
+        --head "$(git -C "$FIXTURE" rev-parse HEAD)" 2>/dev/null |
+        python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print("unparseable"); raise SystemExit
+print((d.get("data") or {}).get("mode","<none>"))')
+  [ "$stale_mode" = "fallback" ] \
+    && ok "stale index → mode=fallback (fails closed)" \
+    || bad "stale index → expected mode=fallback, got '$stale_mode'"
 
   # 7. opt-out is sticky and suppresses both status and ensure.
   bash "$CG" opt-out --repo "$FIXTURE" >/dev/null 2>&1
   assert_action "after opt-out, status" declined \
-    "$(DEVPILOT_BIN=/nonexistent/devpilot bash "$CG" status --repo "$FIXTURE" 2>/dev/null)"
+    "$(CODEGRAPH_BIN=/nonexistent/codegraph bash "$CG" status --repo "$FIXTURE" 2>/dev/null)"
   assert_action "after opt-out, ensure does not build" declined \
-    "$(DEVPILOT_BIN=/nonexistent/devpilot bash "$CG" ensure --repo "$FIXTURE" 2>/dev/null)"
+    "$(CODEGRAPH_BIN=/nonexistent/codegraph bash "$CG" ensure --repo "$FIXTURE" 2>/dev/null)"
 
   # 8. reset-consent clears it.
   bash "$CG" reset-consent --repo "$FIXTURE" >/dev/null 2>&1
@@ -251,20 +278,21 @@ else: print("ok")
 }
 
 # --- live install ------------------------------------------------------------
-# Opt-in: really downloads ~28 MB from GitHub releases. Installs into the
-# sandbox, never into ~/.local/bin or /usr/local/bin, so it cannot disturb
-# whatever devpilot the user already has.
+# Opt-in: really downloads the ~57 MB CodeGraph bundle from GitHub releases
+# (~280 MB unpacked — it vendors a Node runtime).
+# Installs into the sandbox, never into ~/.local/bin or /usr/local/bin, so it
+# cannot disturb whatever codegraph the user already has.
 cmd_install_live() {
-  head2 "live install into sandbox (~28 MB download)"
+  head2 "live install into sandbox (~57 MB download, ~280 MB unpacked)"
   cmd_fixture >/dev/null
   rm -rf "$SANDBOX/bin"
   local json
   json=$(bash "$CG" install --yes --dir "$SANDBOX/bin" --repo "$FIXTURE" 2>&1)
   assert_action "install --yes --dir sandbox" ready "$json"
-  if [ -x "$SANDBOX/bin/devpilot" ]; then
-    ok "binary present: $("$SANDBOX/bin/devpilot" --version 2>/dev/null | head -1)"
+  if [ -x "$SANDBOX/bin/codegraph" ]; then
+    ok "CLI present: $("$SANDBOX/bin/codegraph" version 2>/dev/null | head -1)"
   else
-    bad "no binary at $SANDBOX/bin/devpilot"
+    bad "no CLI at $SANDBOX/bin/codegraph"
   fi
 }
 
@@ -295,10 +323,10 @@ cmd_headless() {
   # makes `${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh` resolve to this tree.
   export CLAUDE_PLUGIN_ROOT="$ROOT"
   case $state in
-    present) unset DEVPILOT_BIN ;;
-    missing) export DEVPILOT_BIN=/nonexistent/devpilot ;;
+    present) unset CODEGRAPH_BIN ;;
+    missing) export CODEGRAPH_BIN=/nonexistent/codegraph ;;
     declined)
-      unset DEVPILOT_BIN
+      unset CODEGRAPH_BIN
       bash "$CG" opt-out --repo "$FIXTURE" >/dev/null 2>&1 ;;
     *) bad "unknown state '$state' (present|missing|declined)"; return 1 ;;
   esac
@@ -345,7 +373,7 @@ except Exception: print(sys.stdin.read()[:400] if False else "")
       ok "no opt-out recorded without consent"
     fi
     case $result in
-      *"install --yes"*"Installing devpilot"*) bad "agent appears to have installed unprompted" ;;
+      *"install --yes"*"Installing CodeGraph"*) bad "agent appears to have installed unprompted" ;;
       *) ok "no unprompted install" ;;
     esac
   fi

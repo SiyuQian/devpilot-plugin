@@ -39,18 +39,21 @@ You will receive a path to a manifest file (default `/tmp/devpilot-scan-manifest
 4. **Verify reachability via codegraph (MANDATORY for `sec:injection`, `sec:path-traversal`, `sec:ssrf-csrf`, `sec:tls-misconfig`, `sec:deserialization`, and any finding whose claim is "untrusted input reaches X").** Before emitting the finding:
 
    ```bash
-   devpilot graph query callers_of '<file>::<symbol>' --depth 4
+   "$CG" -- callers_of --repo . --id '<file>::<symbol>' --depth 4
    ```
+
+   `$CG` is the `scripts/codegraph.sh` path the orchestrator handed you. Never call `codegraph` directly.
 
    - **Caller set traces back to an entry point that accepts untrusted input** (CLI flag handler, HTTP/RPC route, env-var read, file read from a user-supplied path) → finding **confirmed**. Append the proven chain to `evidence` as a trailing `graph:` block: list 1–3 callers + the entry point + which input field flows in.
    - **Caller set is internal-only, all literals or whitelisted constants** → **downgrade to `severity: low`** with `why_it_matters` explicitly noting "reachable only from internal code", OR **drop** if the only reason it looked dangerous was the sink pattern.
    - **Empty caller set** → either dead code or symbol is a registered entry point (HTTP handler attached via reflection, init() side effect, exported library API). Re-read the file to classify. If genuinely dead, drop. If entry point, treat as "directly reachable from external input" — confirmed.
+   - **`confident: false` in the response** → the caller set is a graded upper/lower bound, not a fact (`caveats` says which: unresolved call sites, a name collision, or cross-package method binding). Do **not** drop a finding on an empty-or-internal caller set in that case; verify by reading the callers, or emit with `graph: caller set unverified (<caveat>)` and let scoring decide.
 
    For `sec:crypto` and `sec:secrets`: skip reachability unless the primitive is being used as a security boundary (e.g. sha1 as auth hash). In that case `callers_of` decides if a real auth-touching caller exists; otherwise drop.
 
    **Hub priority.** The orchestrator places `/tmp/devpilot-graph-hubs.json` next to the manifest — a list of high-fanin symbols. If a confirmed finding's containing function appears in the hub list, **upgrade `severity` by one step** (low→medium, medium→high) and add `graph: hub (fanin=N)` to the evidence.
 
-   **If `devpilot graph` is unavailable** (binary missing, exit non-zero, repo unsupported language): emit findings with the trailing `graph: unavailable — reachability not verified` line and let the scoring pass downgrade them. Never silently skip the step.
+   **If the graph is unavailable** (CLI missing, `ok:false`, `mode` not `built`): emit findings with the trailing `graph: unavailable — reachability not verified` line and let the scoring pass downgrade them. Never silently skip the step.
 
 5. Record the finding in the required format (below). Set `subcategory` from the enum at the bottom of this prompt.
 
