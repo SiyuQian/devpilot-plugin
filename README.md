@@ -68,9 +68,38 @@ Thin slash-command entry points for the high-traffic skills (each just invokes t
 
 The pr-review parallel fanout is implemented as six dedicated plugin agents (`agents/pr-review-*.md`), each with a fixed system prompt and a read-only tool whitelist: `pr-review-behavior-sweep`, `pr-review-bug-scan`, `pr-review-conventions`, `pr-review-git-history`, `pr-review-in-file-comments`, `pr-review-dependency-check`. They are dispatched by `devpilot:pr-review` and are not meant for standalone use.
 
+## Codegraph
+
+`devpilot:pr-review` grounds its blast-radius analysis in a real call graph rather than grep. That capability comes from the `devpilot` binary's `graph` subcommand — but the plugin does **not** require you to have installed it. All graph access goes through `scripts/codegraph.sh`, which:
+
+- resolves a graph-capable binary from `$PATH`, `~/.local/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, and `$GOPATH/bin` (feature-probing `graph preflight`, since older devpilot releases lack it);
+- reports `needs_install` when there is none, so the skill can **offer** the install instead of silently degrading to grep forever;
+- runs the official upstream installer on explicit consent (`install --yes`), checksum-verified, into `~/.local/bin` by default so no `sudo` prompt can hang a headless session;
+- builds the graph cache when the repo has never been indexed (`ensure`);
+- records a per-repo opt-out so a user who declines is never asked again.
+
+It never prompts — a `read` would hang `claude -p`. The agent asks; the script acts. Every subcommand prints one line of JSON on stdout and progress on stderr.
+
+```bash
+scripts/codegraph.sh ensure --repo .            # safe unattended; never installs
+scripts/codegraph.sh install --yes --repo .     # only after the user says yes
+scripts/codegraph.sh -- preflight --base A --head B
+```
+
+## Running and testing the plugin
+
+`.claude/skills/run-devpilot-plugin/` (the `/run-devpilot-plugin` skill) drives this repo:
+
+```bash
+bash .claude/skills/run-devpilot-plugin/driver.sh smoke        # validate + codegraph state machine
+bash .claude/skills/run-devpilot-plugin/driver.sh headless missing   # real claude -p session
+```
+
+The `headless` mode is the one that matters for skill edits: it copies a skill into a scratch workspace as a project skill and executes it in a real `claude -p` session, so you can see whether a prose change actually moves model behavior. It deliberately avoids `--plugin-dir`, which is shadowed by any installed copy of this plugin. See that skill's `SKILL.md` for the trap list.
+
 ## Validation
 
-CI runs `scripts/validate.py` on every push/PR — plugin manifest JSON, skill/agent/command frontmatter, `devpilot:<skill>` cross-references, and README skill-table drift. Run it locally with `python3 scripts/validate.py` (needs PyYAML).
+CI runs `scripts/validate.py` on every push/PR — plugin manifest JSON, skill/agent/command frontmatter, `devpilot:<skill>` cross-references, and README skill-table drift. Run it locally with `python3 scripts/validate.py` (needs PyYAML), or via `driver.sh validate`, which provisions its own venv (a Homebrew/system python3 refuses `pip install` under PEP 668).
 
 ## Licensing
 
@@ -79,5 +108,7 @@ The plugin packaging is MIT. Several skills (`clean-code-principles`, `confluenc
 ## Relationship to the devpilot repo
 
 The original [devpilot](https://github.com/SiyuQian/devpilot) repo remains the home of the Go CLI (`devpilot gmail/slack/trello/graph` helpers). Some skills (`trello`, `scanning-repos`) shell out to that CLI when it is installed; they degrade gracefully without it.
+
+`devpilot:pr-review` is the exception: rather than degrade, it bootstraps. Its graph step goes through `scripts/codegraph.sh` (see [Codegraph](#codegraph) above), which installs the binary on consent so the capability becomes available instead of staying permanently off. `pr-review`'s *other* two CLI touchpoints (`pr-review preflight`, `pr-review post`) remain pure optimizations with `gh` as the contract.
 
 Skills here were migrated from `devpilot/skills/` with the `devpilot-` name prefix dropped (the plugin namespace provides it) and cross-references rewritten to `devpilot:<skill>`.

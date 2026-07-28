@@ -47,7 +47,7 @@ Every finding tied to a specific line goes in as an inline review comment, never
 ```
 0. Eligibility gate         → references/eligibility.md
 1. Load PR                  → gh / git / pasted patch
-1.5 Graph enrichment        → references/graph.md (preflight once; fallback OK)
+1.5 Graph enrichment        → references/graph.md (codegraph.sh ensure → preflight; offer install if absent)
 2. Parallel fanout          → references/fanout.md (5 core agents in parallel, +F if deps added)
 3. Filter + merge + reconcile against graph → references/confidence.md
 4. Draft review             → references/template.md
@@ -57,7 +57,12 @@ Self-check before post      → references/rationalizations.md
 
 **Working files:** cache intermediate JSON in the session scratchpad directory with the PR number in the filename (`<scratchpad>/pr_<num>_*.json`), never in bare `/tmp` — fixed paths leak stale data between PRs and concurrent reviews.
 
-**CLI-first:** steps 0–1.5 collapse into one `devpilot pr-review preflight` call and step 5 into one `devpilot pr-review post` call when the installed devpilot supports them (`--help` exits 0) — see `references/eligibility.md` and `references/posting.md`. The manual `gh` paths in those files are the contract and the fallback; the CLI is an optimization. Steps 2–4 (fanout, filtering, drafting) are judgment work and always run in the model.
+**No hard dependency on the devpilot CLI.** Two different relationships to that binary, do not conflate them:
+
+- **Steps 0 and 5 are CLI-*optional*.** They collapse into one `devpilot pr-review preflight` / `devpilot pr-review post` call when the installed devpilot supports them (`--help` exits 0). The manual `gh` paths in `references/eligibility.md` and `references/posting.md` are the contract and the fallback; the CLI is a token optimization and nothing is lost without it.
+- **Step 1.5 is CLI-*bootstrapped*.** The graph is a real capability, not a shortcut, so when the binary is missing the skill offers to install it rather than shrugging. All graph access goes through `${CLAUDE_PLUGIN_ROOT}/scripts/codegraph.sh`, which resolves, installs (with consent), and indexes. **Never invoke `devpilot graph` directly.**
+
+Steps 2–4 (fanout, filtering, drafting) are judgment work and always run in the model.
 
 ### 0. Eligibility gate
 
@@ -79,9 +84,22 @@ Or `git diff <base>...HEAD` for a local branch, or read a pasted patch directly.
 
 ### 1.5. Graph enrichment
 
-Run `devpilot graph preflight --base <base-sha> --head <head-sha>` once. Cache the JSON to `<scratchpad>/pr_<num>_graph.json` and inject it into the shared header that every fanout brief sees. The payload tells subagents — before they read any code — which symbols changed, who calls each, which are hubs, which lack tests, and which cross-community edges this PR adds. Agent A's blast-radius answer comes from this payload, not from grep.
+Only when the PR touches a graph-supported language (Go, TypeScript/JavaScript, Rust). Skip entirely for docs-only, Python-only, or shell-only PRs — including the install prompt below.
 
-If the graph cache is missing, the language is unsupported, or preflight fails, **fall back** to the grep-only path and note `Behavior trace: grep-only (graph unavailable: <reason>)` in the body's sweep summary. Do not auto-run `devpilot graph build`. See `references/graph.md` for the full payload schema, fallback triggers, and confidence-weighting rules.
+```bash
+CG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh"
+"$CG" ensure --repo .                                   # safe unattended: never installs, never prompts
+"$CG" -- preflight --base <base-sha> --head <head-sha>   # when ensure says action=ready
+```
+
+Cache the preflight JSON to `<scratchpad>/pr_<num>_graph.json` and inject it into the shared header that every fanout brief sees. The payload tells subagents — before they read any code — which symbols changed, who calls each, which are hubs, which lack tests, and which cross-community edges this PR adds. Agent A's blast-radius answer comes from this payload, not from grep.
+
+**When the binary isn't installed** (`action: needs_install`), do not silently degrade — that is the whole point of this step. Tell the user what the graph buys them and what it costs (~28 MB download into `~/.local/bin`, checksum-verified by devpilot's official installer, a few seconds to index), and ask once:
+
+- Yes → `"$CG" install --yes --repo .`, then continue with the graph.
+- No → `"$CG" opt-out --repo .`, which records the refusal so **no future review in this repo asks again**, then fall back to grep.
+
+For any other non-`ready` action (`declined`, `build_failed`, `unsupported_platform`, `install_failed`), **fall back** to the grep-only path and note `Behavior trace: grep-only (graph unavailable: <reason>)` in the body's sweep summary, quoting the wrapper's `reason` verbatim. `ensure` auto-builds a cold cache — the old "do not auto-run `graph build`" rule now lives inside the wrapper. See `references/graph.md` for the action table, full payload schema, fallback triggers, and confidence-weighting rules.
 
 ### 2. Parallel fanout (5 core + F conditional)
 
@@ -134,7 +152,7 @@ See `references/posting.md` for the full `jq` build, anchor field rules (multi-l
 | File | What's in it |
 |---|---|
 | `references/eligibility.md` | Gate rules + false-positive list (when to skip review entirely, what to never flag). |
-| `references/graph.md` | `devpilot graph preflight` payload schema, fallback triggers, confidence-weighting rules consumed by step 3. |
+| `references/graph.md` | Codegraph bootstrap via `scripts/codegraph.sh` (action table, install consent, opt-out), preflight payload schema, fallback triggers, confidence-weighting rules consumed by step 3. |
 | `references/fanout.md` | Subagent prompts A–F (Behavior, Bug scan + sec/perf coverage, Repo conventions, Git history, In-file comments, Dependency reality) — A–E receive the graph payload; F receives the pre-extracted dependency manifest. |
 | `references/import-verifier.md` | Agent F spec: per-ecosystem registry-check commands (Go / npm / Python / Rust), finding shape, typosquat heuristic, fallback rules. |
 | `references/confidence.md` | 0–100 rubric, tiered thresholds by severity, security severity floor, severity vs. confidence axes, dedupe rules, graph reconciliation. |

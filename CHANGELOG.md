@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.5.0 — 2026-07-28
+
+- **`devpilot:pr-review` now bootstraps the codegraph instead of silently
+  degrading.** Previously, a user who had never installed the `devpilot` CLI got
+  a grep-only review forever and was never told the graph existed. Step 1.5 now
+  goes through the new `scripts/codegraph.sh`, which resolves a graph-capable
+  binary from five locations (feature-probing `graph preflight` rather than
+  comparing version strings), reports `needs_install` when there is none so the
+  skill can *offer* the install, runs the official checksum-verified upstream
+  installer on explicit consent, builds a cold graph cache, and records a
+  per-repo opt-out so anyone who declines is never asked again. The wrapper is
+  strictly non-interactive — a prompt inside it would hang every `claude -p`
+  session, so the agent asks and the script acts.
+  - Reverses the old "do **not** auto-run `devpilot graph build`" rule: `ensure`
+    builds. A review that talks the user into installing the binary and then
+    still reports "graph unavailable" is worse than a few seconds of indexing.
+  - Fallback lines now quote the wrapper's real reason
+    (`graph unavailable: go_no_module: repo contains .go files but no go.mod`)
+    instead of an unactionable "graph unavailable".
+  - `references/graph.md` documents the full action table, consent script, and
+    three payload traps (whole-file `kind:"file"` entries that always look
+    untested and uncalled; `null`-instead-of-`[]` fields; `graph build` exiting
+    0 while reporting `ok:false`).
+  - `pr-review`'s other two devpilot touchpoints (`pr-review preflight`,
+    `pr-review post`) are unchanged and remain optimizations with `gh` as the
+    contract. Nothing in the skill invokes `devpilot graph` directly any more.
+- **New `/run-devpilot-plugin` skill** (`.claude/skills/run-devpilot-plugin/`)
+  with a committed `driver.sh` that actually drives this repo: `smoke` asserts
+  the nine `codegraph.sh` states against a generated Go fixture repo, and
+  `headless present|missing|declined` runs a real `claude -p` session executing a
+  skill from the working tree. The headless path deliberately shadows via a
+  scratch *project* skill, because `--plugin-dir` loses to any installed copy of
+  this plugin and will report success while testing stale code.
+
 ## 1.4.0 — 2026-07-28
 
 - **New skill `devpilot:batch-review-prs`** + `/batch-review-prs` command: sweeps
