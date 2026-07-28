@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.4.0 — 2026-07-28
+
+- **New skill `devpilot:batch-review-prs`** + `/batch-review-prs` command: sweeps
+  your GitHub review inbox using only `gh` — unions `review-requested:@me`,
+  `reviewed-by:@me`, and `author:@me`; drops drafts, bots, PRs already reviewed at
+  the current HEAD SHA, and PRs already claimed by two other reviewers; syncs local
+  checkouts; then claims each PR with a `reviewing:<name>` label and hands it to
+  `devpilot:pr-review` sequentially. All discovery/filtering runs in one subagent so
+  raw `gh api` JSON never enters the main context. Ported from `sq-vsdevx`.
+  Complements `devpilot:pr-review-queue`, which uses the `devpilot` CLI for discovery.
+- **New skill `devpilot:grilling`** + `/grill` command: stress-tests a plan, decision,
+  or design by interviewing you one question at a time, walking the decision tree
+  branch by branch. Landed in PR #6 without a changelog entry; recorded here since
+  1.3.0 was the last release before it.
+
 ## 1.3.0 — 2026-07-21
 
 - **New SessionStart hook** (`hooks/hooks.json` + `scripts/refresh-default-branch.sh`):

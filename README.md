@@ -1,6 +1,6 @@
 # DevPilot Plugin
 
-DevPilot as a native [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) — all 25 skills from the [devpilot](https://github.com/SiyuQian/devpilot) catalog, packaged so one install command gives you the whole toolkit, namespaced as `devpilot:<skill>`.
+DevPilot as a native [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) — all 28 skills from the [devpilot](https://github.com/SiyuQian/devpilot) catalog, packaged so one install command gives you the whole toolkit, namespaced as `devpilot:<skill>`.
 
 ## Install
 
@@ -23,7 +23,8 @@ claude plugin install devpilot@devpilot-marketplace
 | `devpilot:pr-review` | Review a PR/diff, post inline comments |
 | `devpilot:pr-creator` | Create or update pull requests |
 | `devpilot:pr-guard` | Watch a PR until it's mergeable and CI is green (resolves conflicts, fixes failing checks) |
-| `devpilot:pr-review-queue` | Work through a queue of open PRs |
+| `devpilot:pr-review-queue` | Work through a queue of open PRs (via the `devpilot` CLI) |
+| `devpilot:batch-review-prs` | Review-inbox sweep with `gh` only — claim labels, already-reviewed-at-HEAD skip, local-checkout sync |
 | `devpilot:resolving-review-threads` | Respond to inline review comments after pushing fixes |
 | `devpilot:scanning-repos` | Full-repo audit (security, edge cases, coverage, doc drift) → GitHub issues |
 | `devpilot:issue-triage` | Triage and classify open GitHub issues |
@@ -61,6 +62,7 @@ Thin slash-command entry points for the high-traffic skills (each just invokes t
 | `/resolve-issues` | `devpilot:resolve-issues` |
 | `/dead-code` | `devpilot:dead-code-cleanup` |
 | `/grill` | `devpilot:grilling` |
+| `/batch-review-prs` | `devpilot:batch-review-prs` |
 
 ## Agents
 
