@@ -46,9 +46,14 @@ Agent({
 >          'is:pr is:open reviewed-by:@me' \
 >          'is:pr is:open author:@me'; do
 >   gh api --paginate -X GET search/issues -f q="$q" \
->     --jq '.items[] | {url, number, title, repo: .repository_url, draft, user_login: .user.login, user_type: .user.type}'
+>     --jq '.items[] | {url, number, title, repo: (.repository_url | sub("^.*/repos/"; "")), draft, user_login: .user.login, user_type: .user.type}'
 > done
 > ```
+>
+> `repository_url` is an API URL (`https://api.github.com/repos/OWNER/REPO`), so strip the prefix
+> to get the `OWNER/REPO` slug. Every later step uses that slug directly as `$repo` — there is no
+> separate `$owner` variable. For the local-checkout probe you need the bare repo name:
+> `repo_name="${repo##*/}"`.
 >
 > - `review-requested:@me` — explicitly requested reviewers.
 > - `reviewed-by:@me` — PRs you've previously reviewed (GitHub drops you from the requested list after you submit, so updated PRs only show here).
@@ -59,12 +64,17 @@ Agent({
 > - Bot PRs (author type `Bot` or login containing `[bot]`).
 > - **Already reviewed at current HEAD SHA.** For each candidate, in parallel:
 >   ```bash
->   head_sha=$(gh api "repos/$owner/$repo/pulls/$number" --jq '.head.sha')
->   gh api --paginate "repos/$owner/$repo/pulls/$number/reviews" \
->     --jq ".[] | select(.commit_id == \"$head_sha\") | select(.body | test(\"devpilot:pr-review\"))" | head -1
+>   head_sha=$(gh api "repos/$repo/pulls/$number" --jq '.head.sha')
+>   gh api --paginate "repos/$repo/pulls/$number/reviews" \
+>     --jq ".[] | select(.commit_id == \"$head_sha\") | select((.body // \"\") | test(\"devpilot:pr-review\"))" | head -1
 >   # Non-empty → drop (already reviewed at HEAD).
 >   ```
 >   This compares by `commit_id`, not `updatedAt`, so a force-push/rebase (new SHA) correctly does NOT skip.
+>
+>   `(.body // "")` is required, not defensive noise: a bare APPROVE carries a `null` body, and
+>   `null | test(...)` is a hard jq error that aborts the whole paginated pipeline for that PR.
+>   Without the fallback, one uncommented approval anywhere in a PR's review list empties the
+>   output and the PR reads as never-reviewed — the filter fails permissive and re-reviews it.
 >
 >   The body match anchors on the machine marker `devpilot:pr-review` that `devpilot:pr-review`
 >   emits in its review body (leading `<!-- devpilot:pr-review (devpilot <version>) -->` and the
@@ -79,13 +89,13 @@ Agent({
 >   else
 >     first_name=$(echo "$raw" | awk '{print tolower($1)}' | awk -F'[-_]' '{print $1}' | tr -cd 'a-z0-9')
 >   fi
->   others=$(gh api "repos/$owner/$repo/pulls/$number" \
+>   others=$(gh api "repos/$repo/pulls/$number" \
 >     --jq "[(.labels // [])[].name | select(startswith(\"reviewing:\")) | select(. != \"reviewing:$first_name\")] | length")
 >   # others >= 2 → drop (enough coverage).
 >   ```
 >   Exclude my own `reviewing:$first_name` from the count so re-runs don't skip PRs I already claimed.
 >
-> **3. Sync local repos.** For each unique surviving repo, check these locations in order and use the first match: `../repo-name`, `~/repo-name`, `~/Works/github.com/*/repo-name`. If found, run `git fetch origin` inside it and record the absolute path. If not found, record `remote-only`. (A local checkout lets `devpilot:pr-review` read surrounding code context instead of the diff alone.)
+> **3. Sync local repos.** For each unique surviving repo, check these locations in order and use the first match: `../$repo_name`, `~/$repo_name`, `~/Works/github.com/*/$repo_name`. If found, run `git fetch origin` inside it and record the absolute path. If not found, record `remote-only`. (A local checkout lets `devpilot:pr-review` read surrounding code context instead of the diff alone.)
 >
 > **Return ONLY this** — no logs, no JSON dumps, no narration:
 > - The resolved `first_name` (the reviewer's, for labeling).
@@ -124,7 +134,7 @@ Agent({
 
 First, claim this PR for review by applying a label (idempotent — do not fail the review if labeling fails; just warn and continue):
   label=\"reviewing:<first_name>\"   # first_name from the discovery step
-  gh label create \"$label\" --repo \"<owner>/<repo>\" --color FBCA04 --description \"Claimed for review by <first_name>\" 2>/dev/null || true
+  gh label create \"$label\" --repo \"<owner/repo>\" --color FBCA04 --description \"Claimed for review by <first_name>\" 2>/dev/null || true
   gh pr edit <pr-url> --add-label \"$label\"
 
 Then use devpilot:pr-review to review this PR: <url>. Local repo path: <absolute-path> (or 'not available' if remote-only). If a local path is provided, use it for reading surrounding code context. Follow the skill instructions completely.

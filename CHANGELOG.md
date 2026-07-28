@@ -10,6 +10,10 @@
   `devpilot:pr-review` sequentially. All discovery/filtering runs in one subagent so
   raw `gh api` JSON never enters the main context. Ported from `sq-vsdevx`.
   Complements `devpilot:pr-review-queue`, which uses the `devpilot` CLI for discovery.
+- **New skill `devpilot:grilling`** + `/grill` command: stress-tests a plan, decision,
+  or design by interviewing you one question at a time, walking the decision tree
+  branch by branch. Landed in PR #6 without a changelog entry; recorded here since
+  1.3.0 was the last release before it.
 
 ## 1.3.0 — 2026-07-21
 
