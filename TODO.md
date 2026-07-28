@@ -12,13 +12,17 @@ Skills 从裸目录迁移为 Claude Code plugin 之后的后续改进项。
 - [x] **加 `commands/` 目录** — `/pr-review`、`/pr`、`/repo-scan`、`/resolve-issues`、`/dead-code`。
 - [x] **版本管理与 CHANGELOG** — bump 到 1.1.0，新增 `CHANGELOG.md`。后续每次改动 skill 应继续 bump + 记录；可选打 tag/Release。
 - [x] **交叉引用一致性检查** — 并入 `scripts/validate.py`（`devpilot:<skill>` 引用存在性 + 残留旧 `devpilot-` 前缀检测）；已借此修掉 `harness-engineering/evals/README.md` 里一处迁移误改写。
-- [ ] **`scanning-repos` 迁到 `scripts/codegraph.sh`** — `pr-review` 已经不再直接调
-      `devpilot graph`（改走 wrapper，缺失时引导安装）。但 `scanning-repos` 仍然
-      在 `SKILL.md:49` 直接 `devpilot graph build` / `graph hubs`，三个 scanner
-      agent（`security-scanner`、`edge-case-hunter`、`coverage-auditor`）也各自
-      直接调 graph 查询。这些是「MANDATORY」步骤，没装 CLI 就整体降级成 grep
-      噪音，和 pr-review 改之前是同一个 bug。换成 wrapper 即可复用同一套
-      resolve / 安装同意 / opt-out 逻辑。本次未做，因为需求范围只到 pr-review。
+- [x] **`scanning-repos` 迁到 `scripts/codegraph.sh`** — 随 1.6.0 的 codegraph
+      后端切换一起做完：`SKILL.md` 步骤 2.4 改走 wrapper（`ensure` + `-- hubs`
+      并按 `action` 分支），三个 scanner agent 改用 `"$CG" -- callers_of /
+      tests_for / context`。整个 plugin 已无任何 `devpilot graph` 调用。
+
+- [ ] **观察 codegraph caller 精度** — 1.6.0 引入 `caveats` 机制（`ambiguous_name`、
+      `cross_community_method_binding`、`unresolved_call_sites`）来给 caller 数量
+      分级，因为 CodeGraph 按名字绑定引用、不做 receiver 类型检查（实测
+      `store.go::Close` 收到 93 个「调用者」）。跑一段真实 PR 后统计
+      `confident:false` 的比例：若某个 caveat 常态化到让 graph 失去意义，考虑
+      收紧过滤（例如要求 import 佐证）而不是继续放宽。
 
 - [ ] **评估 `hooks/` 机会** — 例如 PreToolUse hook 机制化 pr-review 的 "subagent 不许 post"（现已部分由 agent 工具白名单覆盖，优先级降低）；pr-creator 的 commit message 规范检查。
 

@@ -67,9 +67,11 @@ The numeric score is internal to the fanout pipeline. The label is what the PR a
 
 When `references/graph.md` produced a preflight payload (mode=`built`), each finding is reconciled against it before the threshold filter runs:
 
-- **Corroborated** — the finding cites a symbol whose `changed_symbols[].callers` / `risk_factors` match the defect (e.g. "this exported function's caller in package X doesn't update for the new contract" and the named caller is in `callers.sample`). Confidence floor raised to 85, cap stays at 95 unless the diff itself shows literal-string evidence.
-- **Contradicted** — the finding asserts a caller relationship or hub status the graph denies (named caller absent from `callers.sample`; "this is a hub" with `in_hub:false`; "no tests" with `tests.has_tests:true`). Confidence capped at 50.
-- **Unsupported** — finding sits outside graph coverage (no symbol match, or `mode != "built"`). Original score stands; do not boost or penalize.
+**Check `callers.confident` first.** The backend grades every caller set (see graph.md → "the three ways a count lies"). When `confident` is `false` the count is a bound produced by name-based resolution, not a fact: such a symbol is **Unsupported** — it can neither corroborate nor contradict. That rule is what stops a name-collision artifact (a method `Close` credited with every `.Close()` in the tree) from capping a real finding at 50.
+
+- **Corroborated** — the finding cites a symbol whose `changed_symbols[].callers` / `risk_factors` match the defect (e.g. "this exported function's caller in package X doesn't update for the new contract" and the named caller is in `callers.sample`), **and that symbol's `callers.confident` is `true`**. Confidence floor raised to 85, cap stays at 95 unless the diff itself shows literal-string evidence.
+- **Contradicted** — the finding asserts a caller relationship or hub status the graph denies **on a `confident: true` symbol** (named caller absent from `callers.sample`; "this is a hub" with `in_hub:false`; "no tests" with `tests.has_tests:true`). Confidence capped at 50.
+- **Unsupported** — finding sits outside graph coverage (no symbol match, `mode != "built"`, or `callers.confident == false`). Original score stands; do not boost or penalize.
 
 A finding both corroborated on one dimension and contradicted on another takes the more conservative outcome (cap at 50).
 
@@ -99,6 +101,7 @@ The fanout relies on Agent A's judgment to surface missing tests on changed publ
 - `is_exported == true`
 - `change_type` ∈ {`"modified"`, `"added"`}
 - `tests.has_tests == false`
+- `callers.confident == true` — a caveated symbol's empty test set means "no test found", not "no test exists" (graph.md → caveats). Injecting there manufactures a wrong finding, which is exactly what unconditional injection must not do.
 - `kind` ∈ {`"function"`, `"method"`}
 - The symbol's diff is **not trivial** (see "Trivial diff" below).
 

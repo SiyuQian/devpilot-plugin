@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.6.0 — 2026-07-29
+
+- **The codegraph backend is now [CodeGraph](https://github.com/colbymchenry/codegraph),
+  not `devpilot graph`.** The old backend could only index a repo whose module
+  graph it could resolve, so a Go tree without `go.mod`, or any Python / Java /
+  Ruby / PHP repo, returned `build_failed` and the review silently became
+  grep-only — the single most common reason the graph "didn't work". CodeGraph is
+  tree-sitter based across 20+ languages and needs no manifest and no compiler.
+  `scripts/codegraph.sh` keeps the exact same contract (`status` / `ensure` /
+  `install --yes` / `opt-out` / `reset-consent` / `-- <args>`, one line of JSON on
+  stdout, notes on stderr), so skills did not have to learn a new interface.
+  - **New `scripts/codegraph_preflight.py`** synthesizes the diff-shaped payload
+    the skills actually consume — `preflight`, `context`, `impact`, `hubs`,
+    `callers_of`, `tests_for` — in one pass over CodeGraph's SQLite index.
+    CodeGraph ships per-symbol primitives only; shelling out per symbol would
+    cost more in process launches than the whole index.
+  - **Caller counts are graded, not asserted.** CodeGraph binds references by
+    name and does not type-check receivers, which produces confident nonsense
+    (`store.go::Close` with 93 "callers" — every `.Close()` in the tree; a Python
+    `.get(...)` bound to a Go method named `get`). Every count now carries
+    `confident` and `caveats` (`unresolved_call_sites`,
+    `cross_community_method_binding`, `ambiguous_name`); cross-language edges are
+    dropped with the count reported. `confidence.md`'s rules were tightened to
+    match: a caveated caller set can corroborate nothing and **contradict
+    nothing**, so a name-collision artifact can no longer kill a real finding.
+  - **A stale index fails closed.** `preflight` sha256-compares every changed
+    file against the blob at `head` and returns `mode:"fallback"` with
+    `index_stale` rather than reporting line numbers from a different revision.
+    Correspondingly `ensure` re-syncs on *every* call: CodeGraph's own
+    pending-change counter is watcher-shaped and was observed reporting 0 for
+    files whose content had changed.
+  - **No side effects on the reviewed repo.** Every CodeGraph child process runs
+    with telemetry off (`CODEGRAPH_TELEMETRY=0`, `DO_NOT_TRACK=1`) and the watcher
+    daemon disabled (`CODEGRAPH_NO_DAEMON=1`), and the in-repo `.codegraph/` index
+    is added to `.git/info/exclude` so a review never dirties `git status`.
+  - Honest about the install path: the upstream installer downloads a ~57 MB
+    release tarball over TLS (~280 MB unpacked — it vendors a Node runtime) and
+    does **not** verify a checksum (the old README claimed
+    checksum verification for devpilot's installer). `npm i -g
+    @colbymchenry/codegraph` with a lockfile plus `CODEGRAPH_BIN` is the
+    verifiable route, and both `graph.md` and the README now say so.
+- **`devpilot:repo-scan` finally goes through the wrapper too** (the open TODO
+  from 1.5.0). Step 2.4 runs `codegraph.sh ensure` + `-- hubs` and branches on the
+  JSON `action`; `security-scanner`, `edge-case-hunter`, and `coverage-auditor`
+  now call `"$CG" -- callers_of / tests_for / context`. Their verdict rules learned
+  the caveat semantics: an empty caller set with `confident:false` is a resolution
+  gap, not dead code, and a hub with non-empty `caveats` earns no severity
+  upgrade. **Nothing in the plugin invokes `devpilot graph` any more.**
+- `driver.sh codegraph` grew to 11 assertions, adding the two regressions this
+  change is most likely to reintroduce: the index must not dirty the fixture's
+  `git status`, and a stale index must return `mode:"fallback"`.
+
 ## 1.5.0 — 2026-07-28
 
 - **`devpilot:pr-review` now bootstraps the codegraph instead of silently

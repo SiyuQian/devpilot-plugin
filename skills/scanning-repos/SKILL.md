@@ -46,16 +46,18 @@ A whole-repo sweep that dispatches **four parallel specialist sub-agents** (secu
    5. **Print the reconciliation summary** to the user before continuing: `N reused, R renamed (old → new), M created` — so they can spot a wrong rename or reuse before issues get filed.
 
    `area:*` labels follow the same three-bucket rule but are reconciled lazily at filing time (step 7): for each finding, check the snapshot for an existing area-ish label covering the same top-level dir; rename it to `area:<dir>` if it's a semantic match with a non-canonical name, otherwise create.
-2.4. **Build (or refresh) the codegraph — MANDATORY.** The security, edge-case, and coverage scanners all use `devpilot graph` queries (`callers_of`, `tests_for`, hubs) to verify findings before emitting them; without the graph their output is grep-only noise.
+2.4. **Build (or refresh) the codegraph — MANDATORY.** The security, edge-case, and coverage scanners all use graph queries (`callers_of`, `tests_for`, hubs) to verify findings before emitting them; without the graph their output is grep-only noise. Every call goes through the plugin's wrapper — never invoke `codegraph` (or `devpilot graph`) directly:
 
    ```bash
-   devpilot graph build --repo .
-   devpilot graph hubs --threshold 5 > /tmp/devpilot-graph-hubs.json
+   CG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh"
+   "$CG" ensure --repo .                                          # indexes or syncs; never prompts
+   "$CG" -- hubs --repo . --threshold 5 > /tmp/devpilot-graph-hubs.json
    ```
 
-   - Build is incremental on re-runs (~1–2s on devpilot-sized repos, <30s on most monorepos).
-   - The hubs snapshot is passed to every scanner so they can upgrade severity for high-fanin symbols.
-   - **If `devpilot graph build` fails** (unsupported language, parser crash, no git): record the failure reason, print it to the user, and continue WITHOUT the graph. Every scanner is then told `graph: unavailable` — they will emit findings with that marker, and the scoring pass downgrades them aggressively (typically below the 75 threshold). Do NOT silently skip — the user must see that confidence is degraded.
+   - The backend is [CodeGraph](https://github.com/colbymchenry/codegraph): tree-sitter, 20+ languages, **no build manifest or compiler needed**. A Go tree without `go.mod`, or a Python/Java/Ruby repo, indexes fine — the class of failure that used to force every scan onto grep.
+   - `ensure` is incremental after the first run (~1–2s on a mid-size repo, seconds on a monorepo) and prints one line of JSON. **Branch on `.action`**: `ready` → continue; `needs_install` → tell the user what the graph buys and ask once, then `"$CG" install --yes --repo .` on a yes or `"$CG" opt-out --repo .` on a no; anything else → continue without the graph, quoting `.reason`.
+   - The hubs snapshot is passed to every scanner so they can upgrade severity for high-fanin symbols. Entries carry `caveats` — a hub with a non-empty `caveats` is a name-binding artifact, not fan-in, so do **not** upgrade severity on it.
+   - **If the graph is unavailable for any reason**: record the failure reason, print it to the user, and continue WITHOUT the graph. Every scanner is then told `graph: unavailable` — they will emit findings with that marker, and the scoring pass downgrades them aggressively (typically below the 75 threshold). Do NOT silently skip — the user must see that confidence is degraded.
    - **Never skip this step to "save time."** The whole skill is minutes long; the graph adds seconds and is the single biggest precision improvement.
 
 2.5. **Build the file manifest AND the doc manifest.**
@@ -64,7 +66,7 @@ A whole-repo sweep that dispatches **four parallel specialist sub-agents** (secu
      1. Find every entry-point file, case-insensitive, anywhere in the repo: `fd -HI -t f -i '^(claude|agents|readme)\.md$'` (fallback: `find . -type f -iregex '.*/\(claude\|agents\|readme\)\.md'`).
      2. Parse markdown links from each — both inline `[text](path)` and reference `[text]: path` forms — keep only relative targets that resolve to existing files with doc-ish extensions (`.md`, `.mdx`, `.txt`, `.rst`) or living under a `docs/`-style directory. Strip `#anchor` for resolution but keep it for the scanner's reporting.
      3. Recurse one hop at a time, dedupe by absolute path, cap at depth 3 and at 200 doc files total. Write the resulting list to `/tmp/devpilot-doc-manifest.txt`. Print to the user: total entry points found, total docs in the manifest, and a tree showing which entry point pulled in which linked doc.
-3. **Dispatch scanners in parallel.** In ONE message, launch four sub-agents using the prompts in `agents/`. Pass each of the first three the manifest path AND `/tmp/devpilot-graph-hubs.json`; they will run `devpilot graph query …` as their reachability oracle.
+3. **Dispatch scanners in parallel.** In ONE message, launch four sub-agents using the prompts in `agents/`. Pass each of the first three the manifest path AND `/tmp/devpilot-graph-hubs.json`, plus the absolute path of `scripts/codegraph.sh` they must use as `$CG`; they will run `"$CG" -- callers_of/tests_for …` as their reachability oracle.
    - `agents/security-scanner.md` — pass `/tmp/devpilot-scan-manifest.txt` + hubs file
    - `agents/edge-case-hunter.md` — pass `/tmp/devpilot-scan-manifest.txt` + hubs file
    - `agents/coverage-auditor.md` — pass `/tmp/devpilot-scan-manifest.txt` + hubs file
@@ -116,7 +118,7 @@ For doc-drift, the `file` field is the **doc** containing the wrong claim (e.g. 
 
 - `graph: <pattern> <symbol> → <result summary>` — verified via codegraph (e.g. `graph: callers_of internal/auth/oauth.go::openBrowser → 2 callers, both pass literal AuthURL from package init`).
 - `graph: hub (fanin=N)` — appended in addition to a query result, when the symbol is in `/tmp/devpilot-graph-hubs.json`. Severity is bumped one step.
-- `graph: unavailable — reachability not verified` — emitted only when `devpilot graph` failed in step 2.4. Scoring downgrades these.
+- `graph: unavailable — reachability not verified` — emitted only when the graph was unavailable in step 2.4. Scoring downgrades these.
 
 Scanners that emit reachability-class findings without a `graph:` line have their findings dropped by the validator (`scripts/check-findings.py`).
 

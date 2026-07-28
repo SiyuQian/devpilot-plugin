@@ -70,21 +70,31 @@ The pr-review parallel fanout is implemented as six dedicated plugin agents (`ag
 
 ## Codegraph
 
-`devpilot:pr-review` grounds its blast-radius analysis in a real call graph rather than grep. That capability comes from the `devpilot` binary's `graph` subcommand — but the plugin does **not** require you to have installed it. All graph access goes through `scripts/codegraph.sh`, which:
+`devpilot:pr-review` and `devpilot:repo-scan` ground their blast-radius and reachability analysis in a real call graph rather than grep. The backend is [CodeGraph](https://github.com/colbymchenry/codegraph) — a tree-sitter indexer covering 20+ languages that needs **no build manifest and no compiler** — and the plugin does **not** require you to have installed it.
 
-- resolves a graph-capable binary from `$PATH`, `~/.local/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, and `$GOPATH/bin` (feature-probing `graph preflight`, since older devpilot releases lack it);
+It replaced the `devpilot graph` backend for one reason: devpilot could only index a repo whose module graph it could resolve, so a Go tree without `go.mod`, or any Python / Java / Ruby / PHP repo, failed to index and the review quietly became grep-only. CodeGraph indexes those trees fine.
+
+All graph access goes through `scripts/codegraph.sh`, which:
+
+- resolves a CodeGraph CLI (≥ 1.5.0) from `$PATH`, `~/.local/bin`, `~/.codegraph/current/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, and the npm global prefix — or `$CODEGRAPH_BIN` if you set it;
 - reports `needs_install` when there is none, so the skill can **offer** the install instead of silently degrading to grep forever;
-- runs the official upstream installer on explicit consent (`install --yes`), checksum-verified, into `~/.local/bin` by default so no `sudo` prompt can hang a headless session;
-- builds the graph cache when the repo has never been indexed (`ensure`);
-- records a per-repo opt-out so a user who declines is never asked again.
+- runs the official upstream installer on explicit consent (`install --yes`) — launcher into `~/.local/bin` by default so no `sudo` prompt can hang a headless session, bundle into `~/.codegraph` (~57 MB download, ~280 MB unpacked: it vendors a Node runtime) (note: that installer downloads a release tarball over TLS and does *not* verify a checksum — `npm i -g @colbymchenry/codegraph` with a lockfile is the verifiable route, and `CODEGRAPH_BIN` points the wrapper at it);
+- indexes the repo, and re-syncs on every call, because CodeGraph's own pending-change counter is watcher-shaped and has been observed missing real content changes;
+- runs every CodeGraph invocation with **telemetry off and the watcher daemon disabled**, and adds the in-repo `.codegraph/` index to `.git/info/exclude` so a review never dirties the reviewed repo's `git status`;
+- records a per-repo opt-out so a user who declines is never asked again;
+- **synthesizes the diff-shaped payload the skills need** (`scripts/codegraph_preflight.py`), because CodeGraph ships per-symbol primitives, not a risk envelope: changed symbols with callers, tests, hubs, communities and risk factors, computed in one pass over the SQLite index.
 
 It never prompts — a `read` would hang `claude -p`. The agent asks; the script acts. Every subcommand prints one line of JSON on stdout and progress on stderr.
 
 ```bash
 scripts/codegraph.sh ensure --repo .            # safe unattended; never installs
 scripts/codegraph.sh install --yes --repo .     # only after the user says yes
-scripts/codegraph.sh -- preflight --base A --head B
+scripts/codegraph.sh -- preflight --repo . --base A --head B
+scripts/codegraph.sh -- hubs --repo . --threshold 5
+scripts/codegraph.sh -- query Foo --json        # unknown subcommands pass through
 ```
+
+Because name-based resolution can produce confident nonsense (a method `Close` collecting every `.Close()` in the tree; a Python `.get(...)` binding to a Go `get`), every caller count carries `confident` and `caveats`, and cross-language edges are dropped with the count reported. The skills are instructed to treat a caveated count as an upper bound, never as a claim. See `skills/pr-review/references/graph.md`.
 
 ## Running and testing the plugin
 
@@ -107,8 +117,8 @@ The plugin packaging is MIT. Several skills (`clean-code-principles`, `confluenc
 
 ## Relationship to the devpilot repo
 
-The original [devpilot](https://github.com/SiyuQian/devpilot) repo remains the home of the Go CLI (`devpilot gmail/slack/trello/graph` helpers). Some skills (`trello`, `scanning-repos`) shell out to that CLI when it is installed; they degrade gracefully without it.
+The original [devpilot](https://github.com/SiyuQian/devpilot) repo remains the home of the Go CLI (`devpilot gmail/slack/trello` helpers). Some skills (`trello`) shell out to that CLI when it is installed; they degrade gracefully without it. The graph is no longer one of those touchpoints — `devpilot graph` was replaced by CodeGraph (see [Codegraph](#codegraph) above).
 
-`devpilot:pr-review` is the exception: rather than degrade, it bootstraps. Its graph step goes through `scripts/codegraph.sh` (see [Codegraph](#codegraph) above), which installs the binary on consent so the capability becomes available instead of staying permanently off. `pr-review`'s *other* two CLI touchpoints (`pr-review preflight`, `pr-review post`) remain pure optimizations with `gh` as the contract.
+`devpilot:pr-review` and `devpilot:repo-scan` are the exception to graceful degradation: rather than degrade, they bootstrap. Their graph step goes through `scripts/codegraph.sh`, which installs the CLI on consent so the capability becomes available instead of staying permanently off. `pr-review`'s *other* two devpilot touchpoints (`pr-review preflight`, `pr-review post`) remain pure optimizations with `gh` as the contract.
 
 Skills here were migrated from `devpilot/skills/` with the `devpilot-` name prefix dropped (the plugin namespace provides it) and cross-references rewritten to `devpilot:<skill>`.

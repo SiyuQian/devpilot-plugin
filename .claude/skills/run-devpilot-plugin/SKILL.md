@@ -43,9 +43,11 @@ Everything runs through one driver:
   once). Nothing to install by hand.
 - **`git`** — used to build the fixture repo.
 - **`claude`** CLI — only for `headless` / `smoke-full`.
-- **`devpilot`** binary — *optional*. Without it the codegraph checks that need
-  a binary skip loudly, and `driver.sh install-live` will fetch one into the
-  sandbox. Never required.
+- **`codegraph`** CLI (≥ 1.5.0) — *optional*. Without it the codegraph checks
+  that need a binary skip loudly, and `driver.sh install-live` will fetch the
+  bundle into the sandbox. Never required. `CODEGRAPH_BIN=<path>` overrides
+  resolution (the driver uses `CODEGRAPH_BIN=/nonexistent/codegraph` to test the
+  not-installed path).
 
 No `apt-get` / `brew install` step exists for this repo.
 
@@ -65,15 +67,17 @@ output:
 == scripts/codegraph.sh state machine (sandboxed) ==
   PASS no binary → needs_install
   PASS install without --yes refused (exit 2)
-  PASS cold cache → needs_build
-  PASS ensure builds cold cache → ready
+  PASS cold index → needs_build
+  PASS ensure builds cold index → ready
   PASS ensure idempotent → ready
-  PASS preflight payload: mode=built, Hello has 1 caller + untested_public
+  PASS index excluded from git status (.git/info/exclude)
+  PASS preflight payload: mode=built, Hello has 1 confident caller + untested_public
+  PASS stale index → mode=fallback (fails closed)
   PASS after opt-out, status → declined
   PASS after opt-out, ensure does not build → declined
   PASS reset-consent clears the marker
 
-ALL PASS — 10 checks
+ALL PASS — 11 checks
 ```
 
 Subcommands:
@@ -82,10 +86,10 @@ Subcommands:
 |---|---|
 | `smoke` | `validate` + `codegraph`. The default. No API cost. |
 | `validate` | `scripts/validate.py` through the sandbox venv. |
-| `codegraph` | 9 assertions on `scripts/codegraph.sh` in a sandbox. |
+| `codegraph` | 11 assertions on `scripts/codegraph.sh` in a sandbox. |
 | `fixture` | Build the Go fixture repo, print its path + base/head SHAs. |
 | `headless present\|missing\|declined ["extra prompt"]` | Real `claude -p` session executing pr-review step 1.5 with codegraph in that state. |
-| `install-live` | Really downloads devpilot (~28 MB) **into the sandbox**. |
+| `install-live` | Really downloads the CodeGraph bundle (~57 MB, ~280 MB unpacked) **into the sandbox**. |
 | `smoke-full` | `smoke` + all three headless probes. Costs tokens. |
 | `clean` | `rm -rf /tmp/devpilot-plugin-driver`. |
 
@@ -96,11 +100,11 @@ bash .claude/skills/run-devpilot-plugin/driver.sh headless missing
 ```
 
 This copies `skills/pr-review/` into a scratch workspace, launches `claude -p`
-there, and makes it execute step 1.5 against the fixture with no devpilot binary
+there, and makes it execute step 1.5 against the fixture with no codegraph CLI
 resolvable. Verified result — the session reports:
 
 ```json
-{"action":"needs_install","reason":"no graph-capable devpilot binary found", ...}
+{"action":"needs_install","reason":"no codegraph CLI >= 1.5.0 found", ...}
 ```
 
 and then states the prescribed next action (ask for consent once; install only
@@ -117,11 +121,16 @@ are the other two states. All three pass as of this writing.
 
 ### Sandboxing guarantees
 
-`DEVPILOT_HOME` is forced to `/tmp/devpilot-plugin-driver/devpilot-home`, so no
-run touches the user's real graph cache at `~/.devpilot`. `install-live` installs
+The CodeGraph index is **per-repo** (`<repo>/.codegraph/`), so every driver run
+writes only inside the generated fixture at
+`/tmp/devpilot-plugin-driver/fixture` — there is no shared cache dir to redirect,
+and no run can touch an index in a repo you care about. `install-live` installs
 only into `/tmp/devpilot-plugin-driver/bin`, never `~/.local/bin` or
-`/usr/local/bin`, so it cannot disturb an existing devpilot. Override the whole
-sandbox location with `DRIVER_SANDBOX=<dir>`.
+`/usr/local/bin`, so it cannot disturb an existing codegraph. `codegraph.sh`
+itself forces `CODEGRAPH_TELEMETRY=0`, `DO_NOT_TRACK=1`, and
+`CODEGRAPH_NO_DAEMON=1` on every child process, so a driver run neither phones
+home nor leaves a file watcher behind. Override the whole sandbox location with
+`DRIVER_SANDBOX=<dir>`.
 
 ## Run (human path)
 
@@ -158,14 +167,22 @@ regression-checking an edit, because of the shadowing trap below.
   `$HOME/.local/bin/claude` themselves; the driver's `find_claude` does.
 - **`timeout(1)` does not exist on macOS.** A first attempt at bounding a probe
   died with `(eval):1: command not found: timeout`. Don't reach for it.
-- **`devpilot graph build` exits 0 while reporting `ok:false`.** Never judge it by
-  exit code — `codegraph.sh` reads `graph status`'s `ok` field instead.
-- **This repo cannot build its own codegraph, by design.** `driver.sh codegraph`
-  runs against a *generated* Go fixture for exactly this reason: pointing
-  `codegraph.sh ensure` at this repo returns
-  `build_failed: go_no_module: repo contains .go files but no go.mod/go.work`,
-  because `skills/harness-engineering/evals/fixtures/` holds Go *fixtures* with
-  no module manifest. Expected, not a regression.
+- **Never judge an index by the CLI's exit code.** CodeGraph can exit 0 having
+  indexed nothing usable and non-zero after a partial index; `codegraph.sh`
+  re-reads `codegraph status --json` and branches on that instead.
+- **`ensure` re-syncs even when the index reports "current".** Not a wasted
+  second: CodeGraph's `pendingChanges` counter is watcher-shaped and was observed
+  reporting 0 for files whose content had changed (the watcher is off here by
+  design). If you "optimize" that early-return back in, `preflight` starts
+  returning `index_stale` on ordinary reviews.
+- **This repo now *can* index itself** — the `go_no_module` failure that made
+  that impossible was the reason for the backend swap. `driver.sh codegraph`
+  still runs against a *generated* fixture, because the assertions need a known
+  diff with a known caller, not because this tree is unindexable.
+- **A caveated caller count is not a bug to fix in the driver.** CodeGraph binds
+  by name and does not type-check receivers, so `preflight` grades counts with
+  `callers.caveats` / `confident`. The fixture is built to produce a *confident*
+  count (one `Hello`, one caller, one package), which is what check 6 asserts.
 - **Opt-out markers are per-worktree.** The marker goes in the git dir, which for
   a worktree is `…/.git/worktrees/<name>/devpilot-codegraph-optout` — declining
   in a worktree does not carry to the main checkout.
@@ -178,6 +195,6 @@ regression-checking an edit, because of the shadowing trap below.
 | `Not logged in · Please run /login` from a probe | You added `--bare` or overrode `CLAUDE_CONFIG_DIR`. Remove both. |
 | Headless probe passes but your edit clearly isn't loaded | You used `--plugin-dir`. Use `driver.sh headless`, which shadows via a project skill. |
 | `command not found: claude` inside a script | Resolve the binary path; `claude` is an alias. |
-| `build_failed: go_no_module` | Expected when pointed at this repo. Use the fixture (`driver.sh fixture`). |
-| Codegraph checks say `(no devpilot installed …)` | `driver.sh install-live` fetches one into the sandbox. |
+| `mode: fallback` with `index_stale` | The index predates the commit under review. Run `scripts/codegraph.sh ensure --repo <repo>` and retry; failing closed here is deliberate. |
+| Codegraph checks say `(no codegraph installed …)` | `driver.sh install-live` fetches the bundle into the sandbox. |
 | A probe leaves the fixture opted out | `bash scripts/codegraph.sh reset-consent --repo /tmp/devpilot-plugin-driver/fixture` (the driver already does this on exit). |
