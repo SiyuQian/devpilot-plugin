@@ -135,6 +135,12 @@ Report back ONLY the result: approved, commented (with issue count), or skipped 
 
 After each agent completes, report its one-line result before starting the next.
 
+**The `reviewing:<name>` label is deliberately never removed.** It is a durable claim, not
+transient run state: together with the `≥2 other reviewers` filter in Step 1 it is what stops
+several people (or several runs) from spending tokens re-reviewing the same PR. Do not add a
+cleanup step that strips the label after reviewing — that would defeat the whole mechanism.
+Accumulated claim labels on a PR are the intended, useful signal of who has already covered it.
+
 ### Step 4: Summary
 
 After all agents complete:
