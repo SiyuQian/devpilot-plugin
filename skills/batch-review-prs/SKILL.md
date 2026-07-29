@@ -7,11 +7,9 @@ description: "Use this skill whenever the user wants to check their review queue
 
 Discovers all open PRs requesting your review on GitHub and reviews them via `devpilot:pr-review`.
 
-Related: the `pr-review-queue` skill covers the same job when the `devpilot` CLI is installed
-(`devpilot github prs review-queue`). This skill needs only `gh`, and adds claim labels,
-already-reviewed-at-HEAD filtering, and local-checkout syncing. Prefer this one for the
-"my review inbox" workflow; prefer `pr-review-queue` when the user explicitly asks
-for the `devpilot` CLI queue.
+Needs only `gh`. Adds claim labels, already-reviewed-at-HEAD filtering, and local-checkout
+syncing. This is the single review-queue skill — the older `pr-review-queue` (which discovered
+the queue via `devpilot github prs review-queue`) was removed as a duplicate.
 
 ## Context discipline (read first)
 
