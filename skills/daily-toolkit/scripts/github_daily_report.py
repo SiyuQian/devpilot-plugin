@@ -26,7 +26,7 @@ def run_gh_command(args):
         return None
 
 
-def parse_json_stream(text):
+def parse_json_stream(text, context=""):
     """解析可能包含多个 JSON 值的文本
 
     `gh api --paginate --jq` 会对每一页分别应用 jq 过滤器，输出多个
@@ -34,6 +34,9 @@ def parse_json_stream(text):
     所以不能直接用 json.loads。这里用 JSONDecoder.raw_decode 循环解析，
     容忍值之间任意的空白/换行；如果整体本来就是单个 JSON 数组，也会被
     正确展开为列表。
+
+    `context` 用于在解析失败时的 stderr 诊断信息里标明是哪个仓库/接口
+    出的问题，例如 f"commits in {repo}"。
     """
     values = []
     decoder = json.JSONDecoder()
@@ -50,7 +53,8 @@ def parse_json_stream(text):
         except json.JSONDecodeError as e:
             # 某一页（通常是末尾）截断或损坏时，保留之前已解析出的记录，
             # 而不是因为一个坏值就把整批已解析的结果全部丢弃。
-            print(f"Failed to parse JSON stream at offset {idx}, keeping {len(values)} already-parsed value(s): {e}", file=sys.stderr)
+            label = context or "input"
+            print(f"Failed to parse JSON stream for {label} at offset {idx}, keeping {len(values)} already-parsed value(s): {e}", file=sys.stderr)
             break
         if isinstance(value, list):
             values.extend(value)
@@ -69,12 +73,9 @@ def get_recent_repos(days=2):
     ])
     
     if result:
-        try:
-            repos = json.loads(result)
-            cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-            return [r for r in repos if r.get("pushedAt", "") > cutoff]
-        except json.JSONDecodeError as e:
-            print(f"Failed to parse repo list JSON: {e}", file=sys.stderr)
+        repos = parse_json_stream(result, context="repo list")
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        return [r for r in repos if isinstance(r, dict) and r.get("pushedAt", "") > cutoff]
     return []
 
 
@@ -92,11 +93,8 @@ def get_repo_commits(repo, date):
     ])
 
     if result:
-        try:
-            commits = parse_json_stream(result)
-            return [c for c in commits if c]
-        except json.JSONDecodeError as e:
-            print(f"Failed to parse commits JSON for {repo}: {e}", file=sys.stderr)
+        commits = parse_json_stream(result, context=f"commits in {repo}")
+        return [c for c in commits if isinstance(c, dict) and c]
     return []
 
 
@@ -113,11 +111,7 @@ def get_repo_prs(repo, date):
     ])
 
     if result:
-        try:
-            prs = parse_json_stream(result)
-        except json.JSONDecodeError as e:
-            print(f"Failed to parse pull requests JSON for {repo}: {e}", file=sys.stderr)
-            prs = []
+        prs = parse_json_stream(result, context=f"pull requests in {repo}")
 
         for pr in prs:
             if not isinstance(pr, dict):
@@ -155,11 +149,7 @@ def get_repo_issues(repo, date):
     ])
 
     if result:
-        try:
-            issues = parse_json_stream(result)
-        except json.JSONDecodeError as e:
-            print(f"Failed to parse issues JSON for {repo}: {e}", file=sys.stderr)
-            issues = []
+        issues = parse_json_stream(result, context=f"issues in {repo}")
 
         for issue in issues:
             if not isinstance(issue, dict):
