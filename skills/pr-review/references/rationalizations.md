@@ -52,7 +52,8 @@ Before running `gh pr review`, run through this list. A "yes" on any item means 
 - Comparing two options the author already listed instead of surfacing ones they did not consider.
 - "LGTM" without a single traced input.
 - Only files in the diff were opened; no callers, tests, or configs.
-- Findings tied to a line dumped into the body instead of attached as inline comments.
+- Findings tied to a line dumped into the body instead of attached as inline comments. Mechanical form of this check: the POST payload has findings but an empty (or missing) `comments[]` array.
+- Body was free-composed instead of rendered from `template.md` — missing the `<!-- devpilot:pr-review` marker, the `### Inline findings` counts, or the disclaimer's `Code graph / AST facts:` slot (which must state `used`, `partial: <gap>`, or `not available` for this review).
 - An inline comment that repeats the file path or line number inside its text.
 - A cross-cutting finding promoted to the body because "no line fit" — should have anchored to the most representative line.
 - Author questions about behavior the code could have answered.
