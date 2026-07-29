@@ -94,8 +94,10 @@ Inline comments do NOT need these links — their anchor (`path`, `line`) is str
 
 ### Pre-post sanity check
 
-Before the POST:
+Before the POST, these are hard gates — a failed check means the payload is malformed and MUST NOT be posted:
 
+- **`comments[]` is non-empty whenever any finding survived filtering.** Zero inline comments is only legal when the review has zero findings (clean approve). Findings rendered as body sections with `path:line` references instead of `comments[]` entries is the single most common failure of this skill — if you catch yourself doing it, go back to step 4 and re-read `template.md`.
+- **The body is the rendered `template.md` skeleton**, verifiable mechanically: it contains the leading `<!-- devpilot:pr-review` marker, a `### Verdict` heading, an `### Inline findings` count section, and the disclaimer line with the `Code graph / AST facts: <used | partial | not available>` slot filled in. A body missing any of these was free-composed, not drafted from the template — redraft it.
 - Every inline comment's `(path, line)` exists in the diff at `head_sha` (`gh pr diff` output). Posting against a non-diff line returns 422.
 - The combined body length is well under GitHub's review-body limit (65 KB). Trim if needed; per-finding detail lives inline anyway.
 - The event matches the highest-severity finding (table above).
@@ -133,6 +135,7 @@ In any of those cases, render the body and the inline comments in chat (each com
 
 ## Anti-shortcuts
 
+- **Don't post via `gh pr review --body/-b`** — that command cannot carry `comments[]`, so every finding silently collapses into the body and the review loses its inline anchors. Always build the combined payload and POST to `.../pulls/:num/reviews` (or use `devpilot pr-review post`).
 - **Don't post inline comments via `gh pr comment`** — those are PR conversation comments, not review comments. They show up in a different pane and can't be resolved as part of a review.
 - **Don't post inline comments outside a review** (`POST .../pulls/:num/comments` directly). Always route through `POST .../pulls/:num/reviews` so they land grouped under one review with the right event.
 - **Don't split into multiple reviews** ("one for blockers, one for nits"). One review per pass; the author sees one notification, one set of comments, one verdict.

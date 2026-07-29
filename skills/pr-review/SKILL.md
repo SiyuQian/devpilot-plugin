@@ -141,6 +141,11 @@ jq -n --arg event "$event" --arg body "$body" --argjson comments "$comments_json
 # each entry in $comments_json: {path, line, side:"RIGHT"|"LEFT", body}
 ```
 
+Two invariants gate the POST — violating either means the draft step failed and must be redone, not posted:
+
+1. **Findings survived filtering ⇒ `comments[]` is non-empty.** A review whose findings appear as body prose with `path:line` references has collapsed into a body-only review; never use `gh pr review --body/-b`, which cannot carry `comments[]`.
+2. **The body is the rendered `template.md` skeleton** — including the `<!-- devpilot:pr-review -->` marker and the disclaimer's `Code graph / AST facts: <used | partial | not available>` slot, filled honestly from step 1.5's outcome.
+
 See `references/posting.md` for the full `jq` build, anchor field rules (multi-line / LEFT side / `start_line`), GitLab equivalent, and the local-only "skip posting" mode. Before posting, walk `references/rationalizations.md` self-check.
 
 ## Cross-References
