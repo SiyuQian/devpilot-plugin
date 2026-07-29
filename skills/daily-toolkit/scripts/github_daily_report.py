@@ -26,6 +26,34 @@ def run_gh_command(args):
         return None
 
 
+def parse_json_stream(text):
+    """解析可能包含多个 JSON 值的文本
+
+    `gh api --paginate --jq` 会对每一页分别应用 jq 过滤器，输出多个
+    以换行分隔的 JSON 文档（例如 `{...}\\n{...}`），而不是单个 JSON 数组，
+    所以不能直接用 json.loads。这里用 JSONDecoder.raw_decode 循环解析，
+    容忍值之间任意的空白/换行；如果整体本来就是单个 JSON 数组，也会被
+    正确展开为列表。
+    """
+    values = []
+    decoder = json.JSONDecoder()
+    idx = 0
+    length = len(text)
+    while idx < length:
+        # 跳过值之间的空白
+        while idx < length and text[idx].isspace():
+            idx += 1
+        if idx >= length:
+            break
+        value, end = decoder.raw_decode(text, idx)
+        if isinstance(value, list):
+            values.extend(value)
+        else:
+            values.append(value)
+        idx = end
+    return values
+
+
 def get_recent_repos(days=2):
     """获取最近有活动的仓库"""
     result = run_gh_command([
@@ -39,8 +67,8 @@ def get_recent_repos(days=2):
             repos = json.loads(result)
             cutoff = (datetime.now() - timedelta(days=days)).isoformat()
             return [r for r in repos if r.get("pushedAt", "") > cutoff]
-        except:
-            pass
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse repo list JSON: {e}", file=sys.stderr)
     return []
 
 
@@ -54,15 +82,15 @@ def get_repo_commits(repo, date):
         "api",
         f"repos/{repo}/commits",
         "--paginate",
-        "--jq", f'map(select(.commit.author.date >= "{since}" and .commit.author.date < "{until}")) | map({{sha: .sha[:7], message: .commit.message, author: .commit.author.name, date: .commit.author.date, url: .html_url}})'
+        "--jq", f'.[] | select(.commit.author.date >= "{since}" and .commit.author.date < "{until}") | {{sha: .sha[:7], message: .commit.message, author: .commit.author.name, date: .commit.author.date, url: .html_url}}'
     ])
-    
+
     if result:
         try:
-            commits = json.loads(result)
+            commits = parse_json_stream(result)
             return [c for c in commits if c]
-        except:
-            pass
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse commits JSON for {repo}: {e}", file=sys.stderr)
     return []
 
 
@@ -75,12 +103,12 @@ def get_repo_prs(repo, date):
         "api",
         f"repos/{repo}/pulls",
         "--paginate",
-        "--jq", "map({number: .number, title: .title, state: .state, created_at: .created_at, merged_at: .mergedAt, user: .user.login, url: .html_url, body: .body})"
+        "--jq", ".[] | {number: .number, title: .title, state: .state, created_at: .created_at, merged_at: .mergedAt, user: .user.login, url: .html_url, body: .body}"
     ])
-    
+
     if result:
         try:
-            prs = json.loads(result)
+            prs = parse_json_stream(result)
             for pr in prs:
                 created_date = pr.get("created_at", "")[:10] if pr.get("created_at") else ""
                 merged_date = pr.get("merged_at", "")[:10] if pr.get("merged_at") else ""
@@ -97,9 +125,9 @@ def get_repo_prs(repo, date):
                     created_prs.append(pr_data)
                 if merged_date == date:
                     merged_prs.append(pr_data)
-        except:
-            pass
-    
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse pull requests JSON for {repo}: {e}", file=sys.stderr)
+
     return {"created": created_prs, "merged": merged_prs}
 
 
@@ -112,12 +140,12 @@ def get_repo_issues(repo, date):
         "api",
         f"repos/{repo}/issues",
         "--paginate",
-        "--jq", "map({number: .number, title: .title, state: .state, created_at: .created_at, closed_at: .closed_at, user: .user.login, url: .html_url})"
+        "--jq", ".[] | {number: .number, title: .title, state: .state, created_at: .created_at, closed_at: .closed_at, user: .user.login, url: .html_url}"
     ])
-    
+
     if result:
         try:
-            issues = json.loads(result)
+            issues = parse_json_stream(result)
             for issue in issues:
                 if "/pull/" in issue.get("url", ""):
                     continue
@@ -136,9 +164,9 @@ def get_repo_issues(repo, date):
                     created_issues.append(issue_data)
                 if closed_date == date:
                     closed_issues.append(issue_data)
-        except:
-            pass
-    
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse issues JSON for {repo}: {e}", file=sys.stderr)
+
     return {"created": created_issues, "closed": closed_issues}
 
 
@@ -153,8 +181,8 @@ def get_commit_diff(repo, sha):
     if result:
         try:
             return json.loads(result)
-        except:
-            pass
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse commit diff JSON for {repo}@{sha}: {e}", file=sys.stderr)
     return None
 
 
