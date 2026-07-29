@@ -2,6 +2,14 @@
 
 ## 1.6.0 — 2026-07-29
 
+- **Removed the `pr-review-queue` skill.** It duplicated `batch-review-prs` with a
+  thinner feature set — no claim labels, no already-reviewed-at-HEAD dedup, no
+  local-checkout syncing — and its overlapping description made queue requests
+  route unpredictably between the two. `batch-review-prs` is now the only
+  review-queue skill. The one capability lost is discovery via the `devpilot
+  github prs review-queue` CLI; `batch-review-prs` discovers with `gh api
+  search/issues` instead.
+
 - **The codegraph backend is now [CodeGraph](https://github.com/colbymchenry/codegraph),
   not `devpilot graph`.** The old backend could only index a repo whose module
   graph it could resolve, so a Go tree without `go.mod`, or any Python / Java /
