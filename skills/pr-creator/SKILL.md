@@ -205,6 +205,37 @@ If no project template exists, **read ONE template** based on what you found in 
 - Leave "For Reviewers (human)" items unchecked — those are for humans
 - For bug fixes, describe the bug, root cause, and fix separately
 
+### Mermaid diagrams (when they earn their place)
+
+Both GitHub and GitLab render ```` ```mermaid ```` blocks natively in PR/MR descriptions. Include **one** diagram when the change has a shape that prose explains badly:
+
+| Change shape | Diagram | Example |
+|---|---|---|
+| Multi-step flow, request path, or state machine | `flowchart` / `stateDiagram-v2` | new auth redirect flow, retry/backoff logic |
+| Cross-service or cross-component interaction | `sequenceDiagram` | client → API → worker → queue |
+| Restructured modules, new dependency direction | `flowchart LR` | package split, layering change |
+| Schema / model relationship changes | `erDiagram` | new table + foreign keys |
+
+**Skip the diagram** for single-file fixes, docs/config-only changes, renames, dependency bumps, or anything a reader understands from two sentences. A diagram that just restates the file list is noise — do not add one to look thorough.
+
+Rules when you do add one:
+- Place it under the Description section, after the prose summary — never as a replacement for it.
+- Diagram only what the diff actually changed. If pre-existing context is needed for the diagram to read, mark changed nodes (e.g. a `**new**` label or a `:::changed` class) so reviewers see the delta.
+- Keep it under ~15 nodes. If it needs more, the PR is probably too large — say that instead.
+- Node labels must name real identifiers from the diff (files, functions, services), not invented abstractions.
+- Quote labels containing `()`, `:`, or `-` (`A["handleAuth()"]`) — unquoted punctuation breaks mermaid rendering, and a broken block renders as a raw code fence in the PR.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as "authHandler()"
+    participant S as SessionStore
+    C->>A: POST /callback
+    A->>S: rotate(sessionID)
+    S-->>A: newSessionID
+    A-->>C: 302 + Set-Cookie
+```
+
 **Do not stop to "show the draft for approval."** Write the strongest title and body you can from the diff and create the PR directly. Report the URL afterward; the user can `gh pr edit <number>` if they want to tweak. In autonomous mode (invoked by a parent skill), include the final body inline in your response so the parent can surface it.
 
 ## Create and Report
@@ -260,6 +291,8 @@ glab mr update <number> --draft=false  # GitLab
 | Description based on branch name, not diff | Read `git diff` first. Always. |
 | Generic test plan ("verify no regressions") | Reference specific test files or manual steps from the diff |
 | Auto-checking all checklist items | Run lint/test commands for verifiable items; leave human items unchecked |
+| Prose-only description of a multi-step flow or cross-service change | Add one mermaid diagram — see [Mermaid diagrams](#mermaid-diagrams-when-they-earn-their-place) |
+| Mermaid diagram on a one-file fix or dep bump | Skip it. A diagram restating the file list is noise |
 | No Review Guide section | Always tell reviewers where to start and what to watch for |
 | Generic bug fix description ("fix bug") | Describe the bug symptom, root cause, and fix separately |
 | Leaving irrelevant sections as "N/A" | Remove the section entirely |
