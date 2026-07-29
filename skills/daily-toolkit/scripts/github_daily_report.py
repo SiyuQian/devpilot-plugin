@@ -45,7 +45,13 @@ def parse_json_stream(text):
             idx += 1
         if idx >= length:
             break
-        value, end = decoder.raw_decode(text, idx)
+        try:
+            value, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError as e:
+            # 某一页（通常是末尾）截断或损坏时，保留之前已解析出的记录，
+            # 而不是因为一个坏值就把整批已解析的结果全部丢弃。
+            print(f"Failed to parse JSON stream at offset {idx}, keeping {len(values)} already-parsed value(s): {e}", file=sys.stderr)
+            break
         if isinstance(value, list):
             values.extend(value)
         else:
@@ -109,24 +115,29 @@ def get_repo_prs(repo, date):
     if result:
         try:
             prs = parse_json_stream(result)
-            for pr in prs:
-                created_date = pr.get("created_at", "")[:10] if pr.get("created_at") else ""
-                merged_date = pr.get("merged_at", "")[:10] if pr.get("merged_at") else ""
-                
-                pr_data = {
-                    "number": pr.get("number", 0),
-                    "title": pr.get("title", "Untitled"),
-                    "url": pr.get("url", ""),
-                    "author": pr.get("user", ""),
-                    "body": pr.get("body", "")[:200] if pr.get("body") else ""
-                }
-                
-                if created_date == date:
-                    created_prs.append(pr_data)
-                if merged_date == date:
-                    merged_prs.append(pr_data)
         except json.JSONDecodeError as e:
             print(f"Failed to parse pull requests JSON for {repo}: {e}", file=sys.stderr)
+            prs = []
+
+        for pr in prs:
+            if not isinstance(pr, dict):
+                continue
+
+            created_date = pr.get("created_at", "")[:10] if pr.get("created_at") else ""
+            merged_date = pr.get("merged_at", "")[:10] if pr.get("merged_at") else ""
+
+            pr_data = {
+                "number": pr.get("number", 0),
+                "title": pr.get("title", "Untitled"),
+                "url": pr.get("url", ""),
+                "author": pr.get("user", ""),
+                "body": pr.get("body", "")[:200] if pr.get("body") else ""
+            }
+
+            if created_date == date:
+                created_prs.append(pr_data)
+            if merged_date == date:
+                merged_prs.append(pr_data)
 
     return {"created": created_prs, "merged": merged_prs}
 
@@ -146,26 +157,30 @@ def get_repo_issues(repo, date):
     if result:
         try:
             issues = parse_json_stream(result)
-            for issue in issues:
-                if "/pull/" in issue.get("url", ""):
-                    continue
-                    
-                created_date = issue.get("created_at", "")[:10] if issue.get("created_at") else ""
-                closed_date = issue.get("closed_at", "")[:10] if issue.get("closed_at") else ""
-                
-                issue_data = {
-                    "number": issue.get("number", 0),
-                    "title": issue.get("title", "Untitled"),
-                    "url": issue.get("url", ""),
-                    "author": issue.get("user", "")
-                }
-                
-                if created_date == date:
-                    created_issues.append(issue_data)
-                if closed_date == date:
-                    closed_issues.append(issue_data)
         except json.JSONDecodeError as e:
             print(f"Failed to parse issues JSON for {repo}: {e}", file=sys.stderr)
+            issues = []
+
+        for issue in issues:
+            if not isinstance(issue, dict):
+                continue
+            if "/pull/" in issue.get("url", ""):
+                continue
+
+            created_date = issue.get("created_at", "")[:10] if issue.get("created_at") else ""
+            closed_date = issue.get("closed_at", "")[:10] if issue.get("closed_at") else ""
+
+            issue_data = {
+                "number": issue.get("number", 0),
+                "title": issue.get("title", "Untitled"),
+                "url": issue.get("url", ""),
+                "author": issue.get("user", "")
+            }
+
+            if created_date == date:
+                created_issues.append(issue_data)
+            if closed_date == date:
+                closed_issues.append(issue_data)
 
     return {"created": created_issues, "closed": closed_issues}
 
