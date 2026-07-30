@@ -1,5 +1,90 @@
 # Changelog
 
+## 1.6.2 — 2026-07-30
+
+Three ways step 1.5 (graph enrichment) failed in real reviews, plus two bugs
+found while fixing them.
+
+- **`${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh` pointed into the repo under
+  review.** `CLAUDE_PLUGIN_ROOT` is injected for plugin *hooks*, not for a
+  skill's own bash calls, so it is normally unset during a review and the `:-.`
+  fallback resolved to `./scripts/codegraph.sh` — a path in the reviewed repo
+  that almost never exists. What came back was a bare shell "No such file or
+  directory", which the action table had no branch for, so the model guessed at
+  the cause. In one case the guess ("wrapper absent from this plugin install")
+  was published in a real PR body.
+  - `scripts/codegraph.sh` now carries a `devpilot-codegraph-wrapper` marker on
+    line 2, and `pr-review` / `scanning-repos` resolve it by searching
+    `CLAUDE_PLUGIN_ROOT`, the plugin cache, the marketplace checkout and finally
+    `./scripts/`, **grepping for the marker** so a same-named script in the
+    reviewed repo can never be executed as ours. Failure is now the explicit
+    `wrapper_not_found` action, not a shell error.
+  - New rule in `graph.md` ("Never state a cause you did not verify") plus three
+    `rationalizations.md` rows: quote the tool's own reason verbatim, never a
+    diagnosis you have not checked with a path listing or a `--help` exit code.
+    An unverified cause does not go into a posted artifact.
+
+- **`devpilot graph preflight` exists, and the skill never probed it.** `SKILL.md`
+  asserted "its CLI is not devpilot" while the installed devpilot has shipped
+  `graph build/preflight/hubs/impact/status` all along — so a review would offer a
+  ~57 MB / 280 MB CodeGraph install with a working backend already on PATH.
+  `codegraph.sh` now probes `devpilot graph` before reporting `needs_install`,
+  and serves it even in a repo where the user previously declined the download
+  (that opt-out was about the download, and this fallback installs nothing).
+  `needs_install` / `declined` now carry why the fallback was unusable.
+  - The payloads are **not** field-identical, so nothing consumes devpilot's
+    output raw: new `scripts/devpilot_graph_adapter.py` normalises it and marks
+    what it cannot supply. `changed_symbols[].lines` is `null` (anchor on the
+    diff hunk), the whole-repo `covers_base_sha` is replaced by a `covers_head_sha`
+    recomputed from git — which fails the payload closed with `index_stale`, as
+    the CodeGraph path already did — and `callers_of` / `tests_for` return
+    `unsupported_on_devpilot_backend` rather than an empty shape a review would
+    read as "no callers".
+  - New payload field `data.contradiction_allowed: false` on this backend.
+    `callers.confident` is `true` (devpilot binds through a resolved module
+    graph) but it exposes no per-symbol resolution diagnostics, so a count may
+    **corroborate** a finding and must never **contradict** one. CodeGraph stays
+    the preferred backend precisely because devpilot refuses repos it cannot
+    resolve — a Go tree without `go.mod` still fails with `go_no_module`.
+
+- **The documented flow almost always produced `index_stale`.** Step 1 loads a PR
+  with `gh pr view` / `gh pr diff`, neither of which checks head out, so the index
+  described the default branch while the diff described the PR head. New
+  `ensure --repo <r> --at <head-sha>` materialises the reviewed revision and
+  returns its path as `.repo`, which callers pass to the preflight; the user's
+  checkout is never modified. Indexing takes ~3 s and turns `mode: fallback`
+  into `mode: built`.
+  - The tree is a `git clone --shared --no-checkout` under
+    `~/.local/state/devpilot-plugin/graph-trees/`, **not** a `git worktree add`,
+    and deliberately outside the repo: CodeGraph resolves a project by walking to
+    the outermost git root, so both a linked worktree and a nested clone silently
+    indexed the user's checkout and reported `ready` over exactly the stale data
+    `--at` exists to avoid. `cache_state` now returns `mismatch` → `build_failed`
+    with `worktree_mismatch` when an index turns out to describe another tree, so
+    a future backend change surfaces loudly instead of as a wrong review.
+
+- **Bug: `ensure` aborted on every warm-index review.** `note "… $REPO_DIR…"` —
+  bash's identifier scan swallows the following multibyte `…` into the variable
+  name, and under `set -u` that killed the script with `REPO_DIR<?>: unbound
+  variable` before the sync could run. Only the *sync* path was affected, so a
+  first review worked and every subsequent one silently produced no JSON.
+
+- **Bug: the opt-out marker was per-worktree.** It resolved through
+  `--absolute-git-dir`, so declining in one worktree re-asked in every other one;
+  `.git/info/exclude` had the same problem, leaving `.codegraph/` visible in
+  `git status` inside a worktree. Both now use the common git dir.
+
+- `pr-review` step 1.5 no longer claims the graph only covers Go / TS / Rust and
+  skips "Python-only" PRs — that contradicted `graph.md` and skipped the graph on
+  PRs CodeGraph indexes fine. The only skip is a diff with no code at all.
+
+- `driver.sh` grew 8 assertions (`--at` in a worktree, marker presence, the
+  devpilot fallback and its two payload guardrails, the no-re-ask rule) and two
+  headless states: `fallback` (asserts no install prompt when devpilot serves the
+  graph) and `unset-root`, which unsets `CLAUDE_PLUGIN_ROOT`, plants a decoy
+  `scripts/codegraph.sh` in the reviewed repo, and asserts the session runs
+  neither the decoy nor an unverified explanation.
+
 ## 1.6.0 — 2026-07-29
 
 - **Removed the `pr-review-queue` skill.** It duplicated `batch-review-prs` with a

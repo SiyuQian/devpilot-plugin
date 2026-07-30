@@ -59,8 +59,8 @@ Self-check before post      → references/rationalizations.md
 
 **No hard dependency on the devpilot CLI.** Two different relationships to that binary, do not conflate them:
 
-- **Steps 0 and 5 are CLI-*optional*.** They collapse into one `devpilot pr-review preflight` / `devpilot pr-review post` call when the installed devpilot supports them (`--help` exits 0). The manual `gh` paths in `references/eligibility.md` and `references/posting.md` are the contract and the fallback; the CLI is a token optimization and nothing is lost without it.
-- **Step 1.5 is CLI-*bootstrapped*, and its CLI is not devpilot.** The graph comes from [CodeGraph](https://github.com/colbymchenry/codegraph) (tree-sitter, 20+ languages, no build manifest required). It is a real capability, not a shortcut, so when the CLI is missing the skill offers to install it rather than shrugging. All graph access goes through `${CLAUDE_PLUGIN_ROOT}/scripts/codegraph.sh`, which resolves, installs (with consent), indexes, and synthesizes the preflight payload. **Never invoke `codegraph` directly.**
+- **Steps 0 and 5 are CLI-*optional*.** They collapse into one `devpilot pr-review preflight` / `devpilot pr-review post` call when the installed devpilot supports them (`--help` exits 0 — it does not in v0.18.3, so expect the `gh` path). The manual `gh` paths in `references/eligibility.md` and `references/posting.md` are the contract and the fallback; the CLI is a token optimization and nothing is lost without it.
+- **Step 1.5 is CLI-*bootstrapped*, over two possible backends.** Preferred is [CodeGraph](https://github.com/colbymchenry/codegraph) (tree-sitter, 20+ languages, no build manifest required); the fallback is `devpilot graph preflight`, which *does* exist and is used when CodeGraph is absent and devpilot can index the repo — so the install offer only appears when neither works. It is a real capability, not a shortcut, so when neither backend is available the skill offers the install rather than shrugging. All graph access goes through the plugin's `scripts/codegraph.sh`, which resolves the backend, installs (with consent), indexes, and normalizes the preflight payload. **Never invoke `codegraph` or `devpilot graph` directly**, and read `.backend` from the output — the two payloads are not field-identical.
 
 Steps 2–4 (fanout, filtering, drafting) are judgment work and always run in the model.
 
@@ -84,22 +84,37 @@ Or `git diff <base>...HEAD` for a local branch, or read a pasted patch directly.
 
 ### 1.5. Graph enrichment
 
-Only when the PR touches a graph-supported language (Go, TypeScript/JavaScript, Rust). Skip entirely for docs-only, Python-only, or shell-only PRs — including the install prompt below.
+Skip entirely — including the install prompt below — only for a diff with **no code at all** (docs-only, config-only). There is no language gate worth pre-checking: CodeGraph covers Go, TS/JS, Python, Rust, Java, C#, PHP, Ruby, C/C++, Swift, Kotlin, Scala and more (`references/graph.md`), so excluding Python or shell here would skip the graph on PRs it can actually index.
 
 ```bash
-CG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh"
-"$CG" ensure --repo .                                   # safe unattended: never installs, never prompts
-"$CG" -- preflight --repo . --base <base-sha> --head <head-sha>   # when ensure says action=ready
+# Resolve the wrapper — do NOT write ${CLAUDE_PLUGIN_ROOT:-.}, which is unset in
+# this shell and silently points at the repo under review. Full resolver +
+# marker check: references/graph.md → "Resolving the wrapper".
+CG=$(
+  { printf '%s\n' "${CLAUDE_PLUGIN_ROOT:-}/scripts/codegraph.sh"
+    ls -d "$HOME"/.claude/plugins/cache/*/devpilot/*/scripts/codegraph.sh 2>/dev/null | sort -Vr
+    ls -d "$HOME"/.claude/plugins/marketplaces/*/scripts/codegraph.sh 2>/dev/null
+    printf '%s\n' "./scripts/codegraph.sh"
+  } | while read -r c; do
+        [ -f "$c" ] && grep -q devpilot-codegraph-wrapper "$c" && { printf '%s' "$c"; break; }
+      done
+)
+[ -n "$CG" ] || echo "wrapper_not_found — fall back to grep, do not guess why"
+
+# --at is mandatory: step 1 never checked head out, so without it the index
+# describes the default branch and the preflight returns index_stale.
+"$CG" ensure --repo . --at <head-sha>                   # safe unattended: never installs, never prompts
+"$CG" -- preflight --repo <.repo from ensure> --base <base-sha> --head <head-sha>   # when ensure says action=ready
 ```
 
-Cache the preflight JSON to `<scratchpad>/pr_<num>_graph.json` and inject it into the shared header that every fanout brief sees. The payload tells subagents — before they read any code — which symbols changed, who calls each, which are hubs, which lack tests, and which cross-community edges this PR adds. Agent A's blast-radius answer comes from this payload, not from grep.
+Cache the preflight JSON to `<scratchpad>/pr_<num>_graph.json` and inject it into the shared header that every fanout brief sees. Note `.backend`: on `devpilot`, `changed_symbols[].lines` is `null` and `contradiction_allowed` is `false`. The payload tells subagents — before they read any code — which symbols changed, who calls each, which are hubs, which lack tests, and which cross-community edges this PR adds. Agent A's blast-radius answer comes from this payload, not from grep.
 
-**When the CLI isn't installed** (`action: needs_install`), do not silently degrade — that is the whole point of this step. Tell the user what the graph buys them and what it costs (~57 MB download unpacking to ~280 MB under `~/.codegraph`, launcher in `~/.local/bin`, a few seconds to index, telemetry off, index excluded from their `git status`), and ask once:
+**When neither backend is available** (`action: needs_install` — CodeGraph absent *and* the devpilot fallback could not index this repo; `.reason` says why), do not silently degrade — that is the whole point of this step. Tell the user what the graph buys them and what it costs (~57 MB download unpacking to ~280 MB under `~/.codegraph`, launcher in `~/.local/bin`, a few seconds to index, telemetry off, index excluded from their `git status`), and ask once:
 
 - Yes → `"$CG" install --yes --repo .`, then continue with the graph.
 - No → `"$CG" opt-out --repo .`, which records the refusal so **no future review in this repo asks again**, then fall back to grep.
 
-For any other non-`ready` action (`declined`, `build_failed`, `unsupported_platform`, `install_failed`), **fall back** to the grep-only path and note `Behavior trace: grep-only (graph unavailable: <reason>)` in the body's sweep summary, quoting the wrapper's `reason` verbatim. `ensure` auto-builds a cold index — the old "do not auto-run `graph build`" rule now lives inside the wrapper.
+For any other non-`ready` action (`declined`, `build_failed`, `unsupported_platform`, `install_failed`), or when the resolver above found no wrapper at all, **fall back** to the grep-only path and note `Behavior trace: grep-only (graph unavailable: <reason>)` in the body's sweep summary, quoting the wrapper's `reason` verbatim. **Quote the reason; never publish your own diagnosis of the cause** — see `references/graph.md` → "Never state a cause you did not verify". `ensure` auto-builds a cold index — the old "do not auto-run `graph build`" rule now lives inside the wrapper.
 
 **Read `callers.confident` before quoting any caller count.** `false` means the count is a graded upper bound (name collision, unresolved call sites, or cross-package method binding), not a fact — it steers where you look but must never become a claim in a finding, and it can never contradict one. See `references/graph.md` for the action table, full payload schema, the caveat semantics, fallback triggers, and confidence-weighting rules.
 
