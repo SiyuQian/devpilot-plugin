@@ -169,8 +169,11 @@ cmd_codegraph() {
 
   # 1. No binary anywhere → needs_install (or unsupported_platform off the
   #    published triples — accept either, they are both correct answers).
+  #    DEVPILOT_BIN is neutralised so this stays a statement about CodeGraph
+  #    resolution: the devpilot fallback gets its own checks in 9c below.
   local json got
-  json=$(CODEGRAPH_BIN=/nonexistent/codegraph bash "$CG" status --repo "$FIXTURE" 2>/dev/null)
+  json=$(CODEGRAPH_BIN=/nonexistent/codegraph DEVPILOT_BIN=/nonexistent \
+    bash "$CG" status --repo "$FIXTURE" 2>/dev/null)
   got=$(printf '%s' "$json" | tail -1 | jget action)
   case $got in
     needs_install | unsupported_platform) ok "no binary → $got" ;;
@@ -261,12 +264,27 @@ print((d.get("data") or {}).get("mode","<none>"))')
     && ok "stale index → mode=fallback (fails closed)" \
     || bad "stale index → expected mode=fallback, got '$stale_mode'"
 
-  # 7. opt-out is sticky and suppresses both status and ensure.
+  # 7. opt-out is sticky. The marker covers the CodeGraph *download*, so with no
+  #    other backend reachable both status and ensure must say `declined` — and
+  #    in particular must never say needs_install, which is the re-ask.
   bash "$CG" opt-out --repo "$FIXTURE" >/dev/null 2>&1
   assert_action "after opt-out, status" declined \
-    "$(CODEGRAPH_BIN=/nonexistent/codegraph bash "$CG" status --repo "$FIXTURE" 2>/dev/null)"
+    "$(CODEGRAPH_BIN=/nonexistent/codegraph DEVPILOT_BIN=/nonexistent \
+       bash "$CG" status --repo "$FIXTURE" 2>/dev/null)"
   assert_action "after opt-out, ensure does not build" declined \
-    "$(CODEGRAPH_BIN=/nonexistent/codegraph bash "$CG" ensure --repo "$FIXTURE" 2>/dev/null)"
+    "$(CODEGRAPH_BIN=/nonexistent/codegraph DEVPILOT_BIN=/nonexistent \
+       bash "$CG" ensure --repo "$FIXTURE" 2>/dev/null)"
+
+  # 7b. With devpilot reachable, an opted-out repo still gets a graph: the
+  #     fallback installs nothing, so serving it does not reopen the question the
+  #     user closed. What it must never do is emit needs_install.
+  local optout_dp
+  optout_dp=$(CODEGRAPH_BIN=/nonexistent/codegraph \
+    bash "$CG" ensure --repo "$FIXTURE" 2>/dev/null | tail -1 | jget action)
+  case $optout_dp in
+    ready | declined) ok "after opt-out, no re-ask (action=$optout_dp)" ;;
+    *) bad "after opt-out, expected ready/declined, got '$optout_dp'" ;;
+  esac
 
   # 8. reset-consent clears it.
   bash "$CG" reset-consent --repo "$FIXTURE" >/dev/null 2>&1
@@ -275,6 +293,93 @@ print((d.get("data") or {}).get("mode","<none>"))')
   [ "$after" = "False" ] || [ "$after" = "false" ] \
     && ok "reset-consent clears the marker" \
     || bad "reset-consent left opted_out=$after"
+
+  # 9. The marker line the skills' resolver greps for. Without it every skill
+  #    falls back to `./scripts/codegraph.sh` in the repo under review.
+  grep -q 'devpilot-codegraph-wrapper' "$CG" \
+    && ok "wrapper carries the devpilot-codegraph-wrapper marker" \
+    || bad "marker line missing — the skills' resolver cannot identify this file"
+
+  # 9b. --at: the documented review flow never checks head out, so the index
+  #     describes the wrong revision and preflight fails closed. --at must
+  #     materialise a detached worktree at head and index THAT.
+  local at_head at_base at_json at_repo at_wt at_mode
+  at_head=$(git -C "$FIXTURE" rev-parse HEAD)
+  at_base=$(git -C "$FIXTURE" rev-parse HEAD~1)
+  git -C "$FIXTURE" checkout -q "$at_base"
+  at_json=$(bash "$CG" ensure --repo "$FIXTURE" --at "$at_head" 2>/dev/null | tail -1)
+  at_repo=$(printf '%s' "$at_json" | jget repo)
+  at_wt=$(printf '%s' "$at_json" | jget worktree)
+  at_mode=$(bash "$CG" -- preflight --repo "$at_repo" \
+      --base "$at_base" --head "$at_head" 2>/dev/null |
+      python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print("unparseable"); raise SystemExit
+print((d.get("data") or {}).get("mode","<none>"))')
+  if [ "$at_mode" = "built" ] && [ -n "$at_wt" ] && [ "$at_repo" != "$FIXTURE" ]; then
+    ok "--at indexes a detached worktree at head → mode=built"
+  else
+    bad "--at: expected mode=built in a worktree, got mode='$at_mode' worktree='$at_wt'"
+  fi
+  # The user's own checkout must be untouched by all of that.
+  [ -z "$(git -C "$FIXTURE" status --porcelain 2>/dev/null)" ] \
+    && ok "--at left the reviewed checkout clean" \
+    || bad "--at dirtied the reviewed checkout: $(git -C "$FIXTURE" status --porcelain | head -1)"
+  git -C "$FIXTURE" checkout -q "$at_head" 2>/dev/null
+
+  # 9c. The devpilot fallback: a graph without a 280 MB download, for the repos
+  #     devpilot can index. Its payload is NOT field-identical, so also assert
+  #     the adapter's two guardrails.
+  if ! command -v devpilot >/dev/null 2>&1 || \
+     ! devpilot graph preflight --help >/dev/null 2>&1; then
+    say "  (no graph-capable devpilot on PATH; skipping the fallback-backend checks)"
+    return
+  fi
+  local dp_action dp_backend dp_verdict
+  local dp_json
+  dp_json=$(CODEGRAPH_BIN=/nonexistent/codegraph \
+    bash "$CG" ensure --repo "$FIXTURE" --at "$at_head" 2>/dev/null | tail -1)
+  dp_action=$(printf '%s' "$dp_json" | jget action)
+  dp_backend=$(printf '%s' "$dp_json" | jget backend)
+  if [ "$dp_action" = "ready" ] && [ "$dp_backend" = "devpilot" ]; then
+    ok "no CodeGraph → devpilot graph fallback → ready (no install prompt)"
+  else
+    bad "devpilot fallback → expected ready/devpilot, got '$dp_action'/'$dp_backend'"
+  fi
+
+  dp_verdict=$(CODEGRAPH_BIN=/nonexistent/codegraph \
+    bash "$CG" -- preflight --repo "$(printf '%s' "$dp_json" | jget repo)" \
+      --base "$at_base" --head "$at_head" 2>/dev/null |
+    python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print("unparseable"); raise SystemExit
+data=d.get("data") or {}
+syms=[s for s in (data.get("changed_symbols") or []) if s.get("kind")!="file"]
+if data.get("mode")!="built": print("mode="+str(data.get("mode")))
+elif data.get("backend")!="devpilot": print("backend="+str(data.get("backend")))
+elif data.get("contradiction_allowed") is not False: print("contradiction_allowed must be False")
+elif not syms: print("no changed symbols")
+elif any(s.get("lines") is not None for s in syms): print("lines must be null on this backend")
+elif any((s.get("tests") or {}).get("test_symbols")==[] for s in syms): print("empty list must normalise to null")
+else: print("ok")' 2>/dev/null)
+  [ "$dp_verdict" = "ok" ] \
+    && ok "devpilot payload normalised: lines=null, contradiction_allowed=false" \
+    || bad "devpilot payload wrong: $dp_verdict"
+
+  # A query with no devpilot equivalent must say so, not return an empty shape
+  # the review would read as "no tests reach this symbol".
+  local unsup
+  unsup=$(CODEGRAPH_BIN=/nonexistent/codegraph \
+    bash "$CG" -- tests_for --repo "$FIXTURE" --id 'internal/greet/greet.go::Hello' 2>/dev/null |
+    python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: print("unparseable"); raise SystemExit
+print((d.get("data") or {}).get("reason",""))')
+  case $unsup in
+    unsupported_on_devpilot_backend*) ok "tests_for on the devpilot backend → unsupported, not a fake empty" ;;
+    *) bad "tests_for on devpilot → expected unsupported_on_devpilot_backend, got '$unsup'" ;;
+  esac
 }
 
 # --- live install ------------------------------------------------------------
@@ -318,17 +423,46 @@ cmd_headless() {
   cp -R "$ROOT/skills/pr-review" "$WORKSPACE/.claude/skills/pr-review"
   git -C "$WORKSPACE" init -q . 2>/dev/null
 
-  # CLAUDE_PLUGIN_ROOT is normally injected by Claude Code for plugin scripts.
-  # A project skill gets no such injection, so export it — this is also what
-  # makes `${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh` resolve to this tree.
+  # CLAUDE_PLUGIN_ROOT is injected by Claude Code for plugin *hooks*, not for a
+  # skill's own bash calls — so in a real review it is usually UNSET, and
+  # `${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh` silently points into the repo
+  # under review. Exporting it here makes every state a best case. The
+  # `unset-root` state is the realistic one: it leaves the variable unset and
+  # asserts the skill's resolver finds the wrapper anyway.
   export CLAUDE_PLUGIN_ROOT="$ROOT"
+  # Neutralised where a state is about the CodeGraph install path; the `fallback`
+  # state is the one that exercises the devpilot backend.
+  export DEVPILOT_BIN=/nonexistent
   case $state in
     present) unset CODEGRAPH_BIN ;;
     missing) export CODEGRAPH_BIN=/nonexistent/codegraph ;;
     declined)
       unset CODEGRAPH_BIN
       bash "$CG" opt-out --repo "$FIXTURE" >/dev/null 2>&1 ;;
-    *) bad "unknown state '$state' (present|missing|declined)"; return 1 ;;
+    fallback)
+      # No CodeGraph, but a graph-capable devpilot: the wrapper must serve the
+      # review from it and the session must NOT offer the 280 MB install.
+      export CODEGRAPH_BIN=/nonexistent/codegraph
+      unset DEVPILOT_BIN
+      if ! command -v devpilot >/dev/null 2>&1 || \
+         ! devpilot graph preflight --help >/dev/null 2>&1; then
+        say "  (no graph-capable devpilot on PATH; skipping)"; return 0
+      fi ;;
+    unset-root)
+      unset CODEGRAPH_BIN
+      unset CLAUDE_PLUGIN_ROOT
+      # Make the trap real: the reviewed repo gets a same-named script that would
+      # "work" if the skill resolved by `${CLAUDE_PLUGIN_ROOT:-.}`. The marker
+      # check is what must reject it.
+      mkdir -p "$FIXTURE/scripts"
+      printf '#!/usr/bin/env bash\necho "DECOY WRAPPER RAN" >&2\nexit 3\n' \
+        >"$FIXTURE/scripts/codegraph.sh"
+      chmod +x "$FIXTURE/scripts/codegraph.sh"
+      # The installed plugin copy on this machine predates the marker, so give
+      # the resolver a genuine marked wrapper to find: scripts/ next to the
+      # session's cwd, i.e. the documented bare-checkout case.
+      cp -R "$ROOT/scripts" "$WORKSPACE/scripts" ;;
+    *) bad "unknown state '$state' (present|missing|declined|fallback|unset-root)"; return 1 ;;
   esac
 
   local prompt="Use the pr-review skill. Do NOT review anything, do NOT post \
@@ -355,14 +489,40 @@ except Exception: print(sys.stdin.read()[:400] if False else "")
   # varies run to run.
   local want
   case $state in
-    present)  want='"action":"ready"' ;;
-    missing)  want='"action":"needs_install"' ;;
-    declined) want='"action":"declined"' ;;
+    present)    want='"action":"ready"' ;;
+    missing)    want='"action":"needs_install"' ;;
+    declined)   want='"action":"declined"' ;;
+    fallback)   want='"backend":"devpilot"' ;;
+    unset-root) want='"action":"ready"' ;;
   esac
   case $result in
     *"$want"*) ok "session reported $want" ;;
     *) bad "session did not report $want" ;;
   esac
+
+  if [ "$state" = "fallback" ]; then
+    # A graph it already had must not turn into a download prompt.
+    case $result in
+      *needs_install*|*"57 MB"*|*"280 MB"*)
+        bad "offered the CodeGraph install even though the devpilot backend served the graph" ;;
+      *) ok "no install offered when the devpilot backend worked" ;;
+    esac
+  fi
+
+  if [ "$state" = "unset-root" ]; then
+    # The two failure modes P0-1 produced: running a same-named script from the
+    # repo under review, and publishing an unverified cause for the failure.
+    case $result in
+      *"DECOY WRAPPER RAN"*|*"exit 3"*)
+        bad "ran the decoy scripts/codegraph.sh from the repo under review" ;;
+      *) ok "did not run the reviewed repo's same-named script" ;;
+    esac
+    case $result in
+      *"not ship"*|*"does not ship"*|*"absent from this plugin"*|*"not part of the plugin"*|*"wrapper is missing"*)
+        bad "asserted an unverified cause (the wrapper 'is not shipped') in its report" ;;
+      *) ok "no unverified cause asserted about the wrapper" ;;
+    esac
+  fi
 
   # Side-effect assertions: the agent must not have installed anything, and
   # must not have recorded a refusal the user never gave.
@@ -402,7 +562,8 @@ case ${1:-smoke} in
   smoke-full)
     cmd_validate; cmd_codegraph
     cmd_headless present; cmd_headless missing; cmd_headless declined
+    cmd_headless fallback; cmd_headless unset-root
     report ;;
   clean)        cmd_clean ;;
-  *) say "usage: driver.sh {smoke|smoke-full|validate|fixture|codegraph|install-live|headless <state>|clean}"; exit 2 ;;
+  *) say "usage: driver.sh {smoke|smoke-full|validate|fixture|codegraph|install-live|headless <present|missing|declined|fallback|unset-root>|clean}"; exit 2 ;;
 esac

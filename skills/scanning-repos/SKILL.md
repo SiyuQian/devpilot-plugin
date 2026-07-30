@@ -49,12 +49,24 @@ A whole-repo sweep that dispatches **four parallel specialist sub-agents** (secu
 2.4. **Build (or refresh) the codegraph — MANDATORY.** The security, edge-case, and coverage scanners all use graph queries (`callers_of`, `tests_for`, hubs) to verify findings before emitting them; without the graph their output is grep-only noise. Every call goes through the plugin's wrapper — never invoke `codegraph` (or `devpilot graph`) directly:
 
    ```bash
-   CG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh"
+   # Resolve the wrapper by marker. Do NOT write "${CLAUDE_PLUGIN_ROOT:-.}/…":
+   # that variable is unset in this shell, so the `.` fallback silently points at
+   # the repo being scanned and you get a bare file-not-found.
+   CG=$(
+     { printf '%s\n' "${CLAUDE_PLUGIN_ROOT:-}/scripts/codegraph.sh"
+       ls -d "$HOME"/.claude/plugins/cache/*/devpilot/*/scripts/codegraph.sh 2>/dev/null | sort -Vr
+       ls -d "$HOME"/.claude/plugins/marketplaces/*/scripts/codegraph.sh 2>/dev/null
+       printf '%s\n' "./scripts/codegraph.sh"
+     } | while read -r c; do
+           [ -f "$c" ] && grep -q devpilot-codegraph-wrapper "$c" && { printf '%s' "$c"; break; }
+         done
+   )
    "$CG" ensure --repo .                                          # indexes or syncs; never prompts
    "$CG" -- hubs --repo . --threshold 5 > /tmp/devpilot-graph-hubs.json
    ```
 
-   - The backend is [CodeGraph](https://github.com/colbymchenry/codegraph): tree-sitter, 20+ languages, **no build manifest or compiler needed**. A Go tree without `go.mod`, or a Python/Java/Ruby repo, indexes fine — the class of failure that used to force every scan onto grep.
+   - Preferred backend is [CodeGraph](https://github.com/colbymchenry/codegraph): tree-sitter, 20+ languages, **no build manifest or compiler needed**. A Go tree without `go.mod`, or a Python/Java/Ruby repo, indexes fine — the class of failure that used to force every scan onto grep. When CodeGraph is absent the wrapper falls back to `devpilot graph` (already on PATH, nothing to install) for the repos it *can* index, so `needs_install` now means both backends came up empty. `hubs` works on either; `callers_of` / `tests_for` are CodeGraph-only and return `unsupported_on_devpilot_backend` on the fallback — treat that as `graph: unavailable` for those queries rather than as "no callers".
+   - If the resolver above finds nothing, treat it as graph-unavailable and say so with the literal reason `wrapper_not_found`. **Do not diagnose the cause** (e.g. "the plugin doesn't ship the script") unless you have checked the paths — an unverified diagnosis in a filed issue is a wrong conclusion published.
    - `ensure` is incremental after the first run (~1–2s on a mid-size repo, seconds on a monorepo) and prints one line of JSON. **Branch on `.action`**: `ready` → continue; `needs_install` → tell the user what the graph buys and ask once, then `"$CG" install --yes --repo .` on a yes or `"$CG" opt-out --repo .` on a no; anything else → continue without the graph, quoting `.reason`.
    - The hubs snapshot is passed to every scanner so they can upgrade severity for high-fanin symbols. Entries carry `caveats` — a hub with a non-empty `caveats` is a name-binding artifact, not fan-in, so do **not** upgrade severity on it.
    - **If the graph is unavailable for any reason**: record the failure reason, print it to the user, and continue WITHOUT the graph. Every scanner is then told `graph: unavailable` — they will emit findings with that marker, and the scoring pass downgrades them aggressively (typically below the 75 threshold). Do NOT silently skip — the user must see that confidence is degraded.

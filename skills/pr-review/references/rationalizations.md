@@ -37,6 +37,9 @@ Common shortcuts the reviewer may reach for, and what to do instead. The "Realit
 | "Graph says change_type=modified, so the symbol's behavior changed." | `change_type` is line-overlap based; neighboring edits can mark a struct/function "modified" without changing its shape. Diff the symbol body before treating it as a behavior change. |
 | "Graph is unavailable, so I'll skip the blast-radius question." | Fall back to grep and note `grep-only fallback` in the sweep summary. The question still has to be answered; only the source of the answer changes. |
 | "Graph corroborated my finding, so I'll skip reading the caller file." | Graph confirms the edge exists; it does not confirm the caller still satisfies the new contract. Open the caller. |
+| "The graph tool errored, so I'll explain in the body why it's missing." | You know it failed; you do not know why. "This plugin install doesn't ship the wrapper" and "that backend doesn't exist" have both been published and both been wrong. Quote the tool's own reason verbatim (`graph unavailable: <reason>`) and stop there. A cause you have not checked with a path listing or a `--help` exit code does not go in a posted artifact. |
+| "`preflight` says `index_stale`, so the graph can't help on this PR." | Almost always a missing `--at <head-sha>`: `gh pr view`/`gh pr diff` never check head out, so the index describes the default branch. Re-run `ensure --repo . --at <head-sha>` and pass the returned `.repo` to the preflight before falling back. |
+| "The graph payload has `callers.confident: true`, so a zero count kills this finding." | Not on every backend. When `data.contradiction_allowed` is `false` (the `devpilot` backend), the count may corroborate but must never contradict — that backend does not expose per-symbol resolution diagnostics. Treat the finding as Unsupported and leave its score alone. |
 
 ## Self-check before posting
 

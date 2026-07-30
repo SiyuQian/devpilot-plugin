@@ -4,41 +4,89 @@ Graph is the **fact bed** under the fanout. It does not produce findings on its 
 
 Pre-fanout, run the preflight once. Inject the result into the shared header that every Agent A–E brief sees. Subagents do **not** call the graph themselves — they consume the structured payload.
 
-The backend is [CodeGraph](https://github.com/colbymchenry/codegraph) — a tree-sitter indexer covering 20+ languages that needs **no build manifest and no compiler**. That is why it replaced the old `devpilot graph` backend: devpilot could only index a repo whose module graph it could resolve, so a Go tree without `go.mod`, or any Python / Java / Ruby / PHP repo, failed to index and every review silently degraded to grep. If you are wondering why a payload field changed shape, that swap is the reason.
+## Two backends, and which one you got
 
-## Never call `codegraph` directly
+The wrapper resolves one of two backends and reports which in the JSON `backend` field. **Read it. The payloads are not interchangeable.**
 
-Every graph call in this skill goes through the plugin's wrapper:
+1. **`codegraph`** — [CodeGraph](https://github.com/colbymchenry/codegraph), a tree-sitter indexer covering 20+ languages that needs **no build manifest and no compiler**. Preferred, and the schema documented below is its schema.
+2. **`devpilot`** — `devpilot graph preflight`, used when CodeGraph is not installed and devpilot can index this particular repo. It is already on PATH for anyone using the devpilot CLI, so the wrapper probes it before offering a ~57 MB download — including in a repo where the user previously declined that download, since this backend installs nothing.
+
+CodeGraph is *preferred*, not *better at everything*: devpilot resolves callers through the language's real module graph, but it refuses repos it cannot resolve (a Go tree without `go.mod` fails with `go_no_module`; so does this plugin's own repo). That refusal is why CodeGraph is the default and why the fallback is a probe rather than a first choice.
+
+Where the devpilot payload differs, `scripts/devpilot_graph_adapter.py` normalises it and marks what it cannot supply. Two consequences you must honour:
+
+- **`changed_symbols[].lines` is `null`** on this backend. Anchor on the diff hunk instead.
+- **`data.contradiction_allowed: false`** is present on this backend. `callers.confident` is `true` because devpilot binds structurally, but it exposes no per-symbol resolution diagnostics — so a count here may **corroborate** a finding (floor 85) and must **never contradict** one. See the confidence-weighting section.
+
+## Never call `codegraph` — or `devpilot graph` — directly
+
+The wrapper — not this skill — owns binary resolution, backend choice, install bootstrap, index building, the user's consent decision, and the synthesized preflight. Calling a backend CLI directly reintroduces the bug this design exists to kill (**a user who never installed the CLI silently gets a grep-only review forever, and is never told the graph was available**) and skips three protections the wrapper adds: telemetry off, watcher daemon off, and `.codegraph/` excluded from the reviewed repo's `git status`.
+
+### Resolving the wrapper — do not write `${CLAUDE_PLUGIN_ROOT:-.}`
+
+**`CLAUDE_PLUGIN_ROOT` is not reliably set in the bash calls a skill makes.** It is injected for plugin-shipped hooks, not for the review session's shell — so `${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh` expands to `./scripts/codegraph.sh`, i.e. **a path inside the repo under review**, which almost never exists. What comes back is a bare `No such file or directory` from the shell, which is indistinguishable from "the plugin doesn't ship this script" unless you go looking.
+
+Resolve it by searching the places it can live and confirming each candidate is really this wrapper, via the `devpilot-codegraph-wrapper` marker on its second line:
 
 ```bash
-CG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/codegraph.sh"
+CG=$(
+  { printf '%s\n' "${CLAUDE_PLUGIN_ROOT:-}/scripts/codegraph.sh"
+    ls -d "$HOME"/.claude/plugins/cache/*/devpilot/*/scripts/codegraph.sh 2>/dev/null | sort -Vr
+    ls -d "$HOME"/.claude/plugins/marketplaces/*/scripts/codegraph.sh 2>/dev/null
+    printf '%s\n' "./scripts/codegraph.sh"
+  } | while read -r c; do
+        [ -f "$c" ] && grep -q devpilot-codegraph-wrapper "$c" && { printf '%s' "$c"; break; }
+      done
+)
+[ -n "$CG" ] || echo "wrapper_not_found"
 ```
 
-The wrapper — not this skill — owns binary resolution, install bootstrap, index building, the user's consent decision, and the synthesized preflight. Calling `codegraph` directly reintroduces the bug this design exists to kill (**a user who never installed the CLI silently gets a grep-only review forever, and is never told the graph was available**) and skips three protections the wrapper adds: telemetry off, watcher daemon off, and `.codegraph/` excluded from the reviewed repo's `git status`.
-
-`${CLAUDE_PLUGIN_ROOT}` is set by Claude Code for plugin-shipped scripts. When running the skill from a bare checkout instead of an installed plugin, point `CG` at `scripts/codegraph.sh` in that checkout.
+The marker check is the point: `./scripts/codegraph.sh` is last in the list precisely because a same-named script in the reviewed repo would otherwise be executed as if it were ours.
 
 ## Step 1.5, in full
 
 ### 1. Ask the wrapper what's available
 
 ```bash
-"$CG" ensure --repo .
+"$CG" ensure --repo . --at <head-sha>
 ```
 
-`ensure` is **safe to run unattended** — it never downloads, installs, or prompts. It resolves a graph-capable CLI, indexes the repo (or syncs an existing index), and prints one line of JSON. Branch on `.action`:
+**Always pass `--at <head-sha>`.** Step 1 loads the PR with `gh pr view` / `gh pr diff`, neither of which checks the head branch out — so the checkout is still on the default branch while the diff describes the PR head, and the preflight correctly refuses with `index_stale`. Following this skill's steps literally, without `--at`, produces `mode: fallback` on essentially every remote PR. With `--at`, the wrapper materialises that revision as a detached shared clone under `~/.local/state/devpilot-plugin/graph-trees/`, indexes that, and returns its path as `.repo`.
+
+Three rules that go with it:
+
+- **Feed `.repo` from the `ensure` output into the preflight's `--repo`**, not your own cwd. The index describes that tree, not the user's checkout.
+- **The user's checkout is never modified** — no branch, no detached HEAD, no refs touched. Don't offer to check the PR out yourself; that is the thing this replaces.
+- The tree is cached per (repo, SHA) and reused across re-reviews. Do not clean it up: it is what makes an incremental re-review cheap.
+
+It lives outside the repo because CodeGraph resolves a project by walking to the outermost git root — anything placed inside the repo (linked worktree *or* nested clone) resolved back to the user's checkout and returned `ready` over a stale index. If you ever see `build_failed` with `worktree_mismatch`, that guard is what caught it; fall back to grep and quote the reason.
+
+`ensure` is **safe to run unattended** — it never downloads, installs, or prompts. It resolves a graph-capable backend, indexes the repo (or syncs an existing index), and prints one line of JSON. Branch on `.action`:
 
 | `action` | What it means | What you do |
 |---|---|---|
-| `ready` | CLI found, index built and current. | Go to step 3. |
+| `ready` | Backend found, index built and current. | Go to step 3. Read `.backend`. |
 | `needs_install` | No CodeGraph CLI ≥ 1.5.0 on this machine. | Step 2 — **ask the user.** |
 | `needs_build` | Only from `status`; `ensure` builds instead of returning this. | Run `ensure`. |
 | `declined` | The user already said no in this repo. | Fall back to grep. Do **not** ask again. |
-| `build_failed` | CLI works, but this repo can't be indexed usefully. | Fall back to grep, quoting `.reason`. |
+| `build_failed` | Backend works, but this repo can't be indexed usefully — including `worktree_mismatch`, where the index turned out to describe a different tree than the one asked about. | Fall back to grep, quoting `.reason`. |
 | `unsupported_platform` | No bundle for this OS/arch. | Fall back to grep. Don't offer the install. |
 | `install_failed` | The installer itself failed. | Fall back to grep, quoting `.reason`. |
+| `wrapper_not_found` | **Not emitted by the wrapper — this is the resolver above returning nothing.** No `codegraph.sh` with the marker exists on this machine. | Fall back to grep. Report it as `graph unavailable: wrapper_not_found (could not locate the plugin's codegraph.sh)`. See the rule below before writing anything about *why*. |
 
-The JSON also carries `bin`, `version`, `graph_cache`, `index_dir`, `opted_out`, and `repo`. Human-readable progress goes to **stderr**, JSON to **stdout** — so `"$CG" ensure --repo . 2>/dev/null` is a clean parse.
+`needs_install` and `declined` both mean the devpilot fallback was probed and also came up empty; `.reason` carries why, as `(devpilot graph fallback unusable: <code>: <message>)`. That is worth quoting — `go_no_module` tells the user something actionable.
+
+The JSON also carries `backend`, `bin`, `version`, `graph_cache`, `index_dir`, `opted_out`, `repo`, `repo_arg`, `at_sha`, and `worktree`. Human-readable progress goes to **stderr**, JSON to **stdout** — so `"$CG" ensure --repo . --at <sha> 2>/dev/null` is a clean parse.
+
+### Never state a cause you did not verify
+
+A shell `No such file or directory`, a non-`ready` action, or a `fallback` payload tells you the graph is **unavailable**. It does not tell you **why**, and the two most tempting explanations — "this plugin install does not ship the wrapper", "this backend does not exist" — are exactly the ones that have been wrong in practice. Both have been published in a real PR body.
+
+So:
+
+- In the review body, state only what the tool returned: `graph unavailable: <verbatim reason>`. Never the diagnosis.
+- Before asserting a file, script, or subcommand is absent, check the actual paths (the resolver above) or run `--help` on the actual command. `devpilot graph preflight --help` exiting 0 is what "it exists" looks like.
+- If you have not verified it, it does not go in the body. An unverified diagnosis in a posted PR body is a wrong conclusion published under the author's nose — worse than saying nothing about the cause.
 
 `ensure` re-syncs on every call, even when the index looks current. That is deliberate: CodeGraph's own pending-change counter is watcher-shaped and has been observed reporting zero for files whose content had in fact changed. A sync costs about a second; reviewing stale line numbers costs a wrong review.
 
@@ -60,10 +108,12 @@ Ask **at most once per review**. Unlike the old backend there is no language gat
 ### 3. Run the preflight
 
 ```bash
-"$CG" -- preflight --repo . --base <base-sha> --head <head-sha>
+"$CG" -- preflight --repo <.repo from ensure> --base <base-sha> --head <head-sha>
 ```
 
-`preflight`, `context`, `impact`, `hubs`, `callers_of`, and `tests_for` are **synthesized** by `scripts/codegraph_preflight.py` from the SQLite index — CodeGraph itself ships per-symbol primitives, not a diff-shaped envelope. Anything else after `--` is passed to the CodeGraph CLI verbatim (`"$CG" -- query Foo --json`).
+`preflight`, `context`, `impact`, `hubs`, `callers_of`, and `tests_for` are **synthesized** by `scripts/codegraph_preflight.py` from the SQLite index — CodeGraph itself ships per-symbol primitives, not a diff-shaped envelope. On the `devpilot` backend they are served by `devpilot graph` and normalised by `scripts/devpilot_graph_adapter.py`; `callers_of` and `tests_for` have no devpilot equivalent and return `mode: fallback` with `unsupported_on_devpilot_backend` rather than an invented shape. Anything else after `--` is passed to the CodeGraph CLI verbatim (`"$CG" -- query Foo --json`).
+
+If you did not thread `ensure`'s `.repo` through, passing `--at <head-sha>` here does the same redirect as a safety net.
 
 Cache the JSON to `$SCRATCH/pr_${num}_graph.json`. For an incremental re-review (see eligibility.md), pass `--base <last_reviewed_sha> --head <head_sha>` instead of PR base.
 
@@ -85,7 +135,7 @@ Behavior trace: grep-only (graph unavailable: index_stale: 2 changed file(s) dif
 
 Two failure reasons are worth recognizing on sight:
 
-- **`index_stale`** — the indexed copy of a changed file is not the revision under review, so every line number and edge below it would be confidently wrong. Re-run `"$CG" ensure --repo .` once; if it persists, the worktree is not at `head` (a bare fetch of a PR branch does this) and grep is the correct path.
+- **`index_stale`** — the indexed copy of a changed file is not the revision under review, so every line number and edge below it would be confidently wrong. **The cause is almost always a missing `--at`**: the worktree is on the default branch because step 1 never checked head out. Re-run `"$CG" ensure --repo . --at <head-sha>` and pass the returned `.repo` to the preflight. Only if it persists *with* `--at` is grep the correct path.
 - **`no_indexed_changed_files`** — the diff touches nothing CodeGraph indexed (generated files, a vendored tree, an unsupported language). Not an error; the graph simply has nothing to say about this PR.
 
 ## Payload — what each field means for the review
@@ -170,7 +220,7 @@ Two whole classes of edge are dropped before you ever see them, with counts repo
 After the fanout returns, the main session reconciles each finding against the graph payload:
 
 - **Corroborated** — the finding names a symbol whose callers/risk_factors match the defect, **and that symbol's `callers.confident` is true**. Confidence floor raised to 85. (Cap stays at 95 unless literal-string evidence pushes it to 100.)
-- **Contradicted** — the finding asserts "X calls Y" but the graph shows Y has zero callers **with `confident: true`**, or asserts "this is a hub" but `in_hub:false`. Confidence capped at 50, which drops it under the default threshold.
+- **Contradicted** — the finding asserts "X calls Y" but the graph shows Y has zero callers **with `confident: true`**, or asserts "this is a hub" but `in_hub:false`. Confidence capped at 50, which drops it under the default threshold. **Not available when `data.contradiction_allowed` is `false`** (the `devpilot` backend): treat those findings as Unsupported instead. A backend that cannot show its per-symbol resolution work does not get to kill a finding.
 - **Unsupported** — the finding sits outside the graph's coverage (no symbol match, graph in fallback mode, **or the symbol's `callers.confident` is false**). No adjustment. Original score stands.
 
 A caveated caller set can never contradict a finding — that rule is what keeps a name-collision artifact from killing a real bug. A finding can be both corroborated on one dimension and contradicted on another: take the more conservative outcome.
@@ -202,5 +252,6 @@ Backend-specific limits, all by design rather than bugs to file:
 - **Go resolves better with `go.mod`.** Without it a cross-package call lands in `unresolved_refs` → `unresolved_call_sites`. Indexing still succeeds, which is the whole point of the backend swap, but expect lower-confidence counts in a manifest-less tree.
 - **`is_exported` is syntactic.** For Python/Ruby/Lua/Elixir and friends, where no syntax marks visibility, the synthesizer falls back to the leading-underscore convention.
 - **`untested_public` only fires on behavior kinds** (function, method, class, struct, interface, …). A changed public constant is reported as a changed symbol but never scored as untested.
-- **In a git worktree the opt-out marker lives under `…/.git/worktrees/<name>/`**, so declining in one worktree does not carry over to the main checkout.
+- **The opt-out marker is repo-wide**, keyed on the common git dir, so declining in one worktree holds in the others and in the `--at` indexing worktree. (It used to be per-worktree, which re-asked on every worktree.)
+- **On the `devpilot` backend**, `lines`, `same_community`, `unresolved_candidates`, `indexed_files`, `hub_threshold`, and `cross_language_edges_ignored` are all `null` — devpilot does not compute them. `symbols_with_unresolved_callers` is `0` by construction, not by measurement: a repo devpilot cannot resolve fails to index at all. And it holds only whole-repo `freshness.covers_base_sha`; the adapter recomputes `covers_head_sha` from git and fails the payload closed with `index_stale` when the indexed tree is not the reviewed revision.
 - **A schema change upstream fails the payload closed.** `codegraph_preflight.py` asserts the tables and columns it reads and returns `mode:"fallback"` with `schema_drift` rather than quoting invented facts. If you see that, the CLI outran the synthesizer — update `scripts/codegraph_preflight.py`.
