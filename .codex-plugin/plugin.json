@@ -1,0 +1,40 @@
+{
+  "name": "devpilot",
+  "version": "1.6.2",
+  "description": "DevPilot workflow catalog for Codex: PR review and creation, repository scanning, issue triage and resolution, code quality, content creation, and productivity workflows.",
+  "author": {
+    "name": "Siyu Qian",
+    "email": "david.s.qian@gmail.com",
+    "url": "https://github.com/SiyuQian"
+  },
+  "homepage": "https://github.com/SiyuQian/devpilot-plugin",
+  "repository": "https://github.com/SiyuQian/devpilot-plugin",
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "pr-review",
+    "github",
+    "issues",
+    "go",
+    "productivity"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "DevPilot",
+    "shortDescription": "Engineering and productivity workflows for Codex.",
+    "longDescription": "A catalog of reusable Codex workflows for reviewing and creating pull requests, auditing repositories, resolving issues, improving code quality, creating content, and daily productivity.",
+    "developerName": "Siyu Qian",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/SiyuQian/devpilot-plugin",
+    "defaultPrompt": [
+      "Review this pull request for bugs and regressions.",
+      "Scan this repository and report actionable issues.",
+      "Help me resolve the open issues in this repository."
+    ]
+  }
+}

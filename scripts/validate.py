@@ -37,12 +37,37 @@ def frontmatter(path):
 
 
 # --- plugin manifests ---
-for name in (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"):
+for name in (
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    ".codex-plugin/plugin.json",
+    ".agents/plugins/marketplace.json",
+):
     p = ROOT / name
     try:
         json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         err(f"{name}: {e}")
+
+codex_manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
+codex_marketplace = json.loads(
+    (ROOT / ".agents/plugins/marketplace.json").read_text(encoding="utf-8")
+)
+codex_entries = [
+    entry for entry in codex_marketplace.get("plugins", [])
+    if entry.get("name") == codex_manifest.get("name")
+]
+if len(codex_entries) != 1:
+    err(".agents/plugins/marketplace.json: expected exactly one entry for the Codex plugin")
+else:
+    entry = codex_entries[0]
+    if entry.get("policy", {}).get("installation") != "AVAILABLE":
+        err(".agents/plugins/marketplace.json: devpilot must be available for installation")
+    if entry.get("policy", {}).get("authentication") not in {"ON_INSTALL", "ON_USE"}:
+        err(".agents/plugins/marketplace.json: devpilot has invalid authentication policy")
+    source_path = entry.get("source", {}).get("path")
+    if not source_path or not (ROOT / source_path / ".codex-plugin/plugin.json").is_file():
+        err(".agents/plugins/marketplace.json: devpilot source does not resolve to a plugin")
 
 # --- skills ---
 skill_dirs = sorted(d for d in (ROOT / "skills").iterdir() if d.is_dir())

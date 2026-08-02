@@ -1,8 +1,26 @@
 # DevPilot Plugin
 
-DevPilot as a native [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins) — all 28 skills from the [devpilot](https://github.com/SiyuQian/devpilot) catalog, packaged so one install command gives you the whole toolkit, namespaced as `devpilot:<skill>`.
+DevPilot as a native plugin for Claude Code and Codex — all 27 skills from the [devpilot](https://github.com/SiyuQian/devpilot) catalog, packaged so one installation gives you the whole toolkit, namespaced as `devpilot:<skill>`.
 
 ## Install
+
+### Codex
+
+```bash
+codex plugin marketplace add SiyuQian/devpilot-plugin
+codex plugin add devpilot@devpilot-marketplace
+```
+
+Or from a local checkout:
+
+```bash
+codex plugin marketplace add /absolute/path/to/devpilot-plugin
+codex plugin add devpilot@devpilot-marketplace
+```
+
+Restart Codex and start a new conversation after installing so the skills are loaded.
+
+### Claude Code
 
 ```bash
 claude plugin marketplace add SiyuQian/devpilot-plugin
