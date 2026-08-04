@@ -75,7 +75,7 @@ Things the agent should ask a human about before proceeding.
 
 Both cover "design + tasks + execution." Pick by scope.
 
-**Use OpenSpec** (`openspec-propose`, `openspec-apply-change`, `devpilot:auto-feature`) when:
+**Use OpenSpec** (`openspec-propose`, `openspec-apply-change`) when:
 - The change modifies or adds a **spec** (user-facing behavior contract)
 - You want deltas versioned alongside code (`openspec/changes/<id>/`)
 - Spec sync + archival at the end matters (multiple agents will read this contract later)

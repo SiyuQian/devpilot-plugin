@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.7.0 — 2026-08-05
+
+A verification gate that needs no entry point: after every change, run the
+commands the repo itself declares for the paths that changed.
+
+- **New `.devpilot/verify.json` contract + `scripts/verify.sh` + `Stop` hook.**
+  The manifest maps path globs to the commands that prove those paths still
+  work, each with a `why` naming the behavior it covers — so "how is this
+  feature tested" is recorded once instead of re-derived from CI config on every
+  change. The hook resolves the change set, runs only the matching commands, and
+  exits 2 on failure, handing the agent the failing command instead of letting
+  it finish on red.
+  - Change set is the union of uncommitted, staged, untracked **and**
+    already-committed-since-`origin/<default>` paths — an agent that committed
+    mid-session is still gated on what it committed.
+  - Opt-in per repo by creating the file; no manifest is a no-op, and so is a
+    change no rule matches. `always` commands fire only when some rule matched,
+    so a docs-only edit doesn't trigger a build.
+  - Green cache in `.git/devpilot/verify-green`, fingerprinted over HEAD, the
+    tracked diff, untracked file *contents*, and the manifest — an unchanged tree
+    costs one hash instead of a suite, and editing a rule always re-runs.
+  - `stop_hook_active` short-circuits the re-fire that a blocking Stop hook
+    triggers, so the gate reports once instead of spinning.
+  - Fails closed: an unreadable or wrong-`version` manifest is a failure, not a
+    silent pass. `gate: "warn"` reports without blocking. Escape hatches
+    (`DEVPILOT_VERIFY=off`, `.devpilot/verify.off`) are documented as the user's,
+    not the agent's.
+  - Manifest is JSON, not YAML, so `scripts/verify_plan.py` reads it with the
+    standard library — this repo's own `validate.py` already can't run without a
+    PyYAML that isn't installed on a stock Python.
+- **New `devpilot:verifying-changes` skill.** Owns the manifest: discovers real
+  commands from CI / Makefile / package.json, **runs each one before writing it
+  in** (a command nobody watched exit 0 is a guess), measures them so the user
+  can see what the gate costs per change, keeps rules honest as tests get
+  renamed, and refuses to scaffold a repo with nothing runnable rather than ship
+  a green gate that proves nothing. Registered as a sensor left of pre-commit in
+  `harness-engineering`'s shift-left ladder.
+- **Removed `devpilot:auto-feature`.** It dispatched to
+  `superpowers:test-driven-development`,
+  `superpowers:requesting-code-review` and
+  `superpowers:verification-before-completion`, which are not part of this
+  plugin and are absent unless the user separately installed that marketplace —
+  so its TDD and review gates silently did nothing on a stock install. It also
+  required OpenSpec to own the spec. `harness-engineering`'s plan guidance and
+  `pr-creator`'s autonomous-mode note no longer reference it.
+
 ## 1.6.2 — 2026-07-30
 
 Three ways step 1.5 (graph enrichment) failed in real reviews, plus two bugs

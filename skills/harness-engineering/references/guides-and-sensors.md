@@ -36,6 +36,8 @@ pre-commit  →  pre-PR CI  →  post-merge CI  →  staging  →  prod
 
 For each sensor, pick the leftmost stage that has the required signal. A rule that *could* run in pre-commit but runs in CI wastes an agent iteration per violation.
 
+There is a stage left of pre-commit for an agent: **before it finishes the turn.** `devpilot:verifying-changes` puts it there — `.devpilot/verify.json` maps path globs to the commands that prove those paths work, and the plugin's `Stop` hook runs the matching ones and blocks the agent on red. That turns "the agent said it was done" into "the agent's own change set passed the checks the repo declares for it", with the mapping itself doubling as the written answer to *how is this feature tested*.
+
 ## Guide + sensor recipes by category
 
 Pick the row that matches the rule type; use both columns.
