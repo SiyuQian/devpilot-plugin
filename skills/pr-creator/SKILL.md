@@ -47,7 +47,7 @@ git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null   # → origin/mai
 If that prints nothing, `origin/HEAD` is not set (common in worktrees / shallow clones). Set it
 once, then re-read: `git remote set-head origin -a`. Only if it still fails, fall back to `main`.
 
-**You are in autonomous mode** when this skill was invoked by a parent skill (e.g. `devpilot:resolve-issues`, `devpilot:auto-feature`) rather than directly by a human. In autonomous mode:
+**You are in autonomous mode** when this skill was invoked by a parent skill (e.g. `devpilot:resolve-issues`) rather than directly by a human. In autonomous mode:
 - The "stop and ask the user" gates below become "return control to the parent with the question" — never deadlock waiting for human input that isn't coming.
 - Replace "show the draft to the user before creating" with "include the draft in your final response" so the parent skill can surface it.
 - Do not `cd` out of the worktree; the parent owns cwd.

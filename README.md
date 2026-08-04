@@ -47,7 +47,7 @@ claude plugin install devpilot@devpilot-marketplace
 | `devpilot:issue-triage` | Triage and classify open GitHub issues |
 | `devpilot:resolve-issues` | Burn down open issues with implementer subagents |
 | `devpilot:prd-to-issues` | Decompose a PRD/spec into a GitHub issue tree |
-| `devpilot:auto-feature` | End-to-end feature implementation |
+| `devpilot:verifying-changes` | Own `.devpilot/verify.json` — how each area is tested — and the Stop-hook gate that runs it |
 | `devpilot:google-go-style` | Google Go style guide enforcement |
 | `devpilot:clean-code-principles` | Language-agnostic clean-code review principles |
 | `devpilot:dead-code-cleanup` | Find and remove dead code (Go/TS) |
@@ -112,6 +112,44 @@ scripts/codegraph.sh -- query Foo --json        # unknown subcommands pass throu
 ```
 
 Because name-based resolution can produce confident nonsense (a method `Close` collecting every `.Close()` in the tree; a Python `.get(...)` binding to a Go `get`), every caller count carries `confident` and `caveats`, and cross-language edges are dropped with the count reported. The skills are instructed to treat a caveated count as an upper bound, never as a claim. See `skills/pr-review/references/graph.md`.
+
+## Verify gate
+
+The plugin ships a `Stop` hook that answers one question after every change: **does the program still work?** It is off until a repo opts in, and opting in means creating one file.
+
+`.devpilot/verify.json` in the worked-on repo maps path globs to the commands that prove those paths still work, each with a `why` recording the behavior it covers — so "how is this feature tested" is written down once instead of re-derived from CI config on every change:
+
+```json
+{
+  "version": 1,
+  "gate": "block",
+  "always": [{ "run": "go build ./...", "why": "the tree compiles" }],
+  "rules": [
+    { "match": ["internal/auth/**"], "run": ["go test ./internal/auth/..."],
+      "why": "token rotation, refresh-failure fallback" }
+  ],
+  "manual": [{ "match": ["web/src/checkout/**"], "steps": "…", "who": "siyu" }]
+}
+```
+
+On every Stop, `scripts/verify.sh hook` resolves the change set — uncommitted, staged, untracked, **and** already-committed-since-`origin/<default>`, so an agent that committed mid-session is still gated — matches it against the rules, runs only what's covered, and exits 2 on failure so the agent is handed the failing command and keeps working instead of finishing on red.
+
+The parts that keep it usable rather than something you turn off:
+
+- **No manifest → no-op.** So is a change that matches no rule (`nothing_to_do`) — a docs edit shouldn't trigger a build, which is also why `always` only fires when some rule matched.
+- **Green cache.** A fingerprint of the change set (HEAD, tracked diff, untracked file contents, and the manifest itself) lands in `.git/devpilot/verify-green`; an unchanged tree costs one hash instead of a suite. Editing the manifest changes the fingerprint, so rule changes always re-run.
+- **Re-entry guard.** A blocking Stop hook fires again after it blocks; `stop_hook_active` short-circuits the second pass so the gate reports once instead of spinning.
+- **Fails closed.** An unreadable or bad-schema manifest is a failure, not a silent pass. `gate: "warn"` reports without blocking, for a rule set you don't trust yet.
+- **Escape hatches for the user, not the agent:** `DEVPILOT_VERIFY=off` or a `.devpilot/verify.off` file.
+
+```bash
+scripts/verify.sh plan --repo .   # what would run, and why — runs nothing
+scripts/verify.sh run --repo .    # run it now, for what changed
+scripts/verify.sh run --all       # every rule, ignoring the change set
+scripts/verify.sh init --repo .   # placeholder manifest (never overwrites)
+```
+
+`devpilot:verifying-changes` owns authoring and maintaining the manifest: it discovers the real commands from CI / Makefile / package.json, **runs each one before writing it in**, measures them so you can see what the gate costs per change, and refuses to scaffold a repo that has nothing runnable rather than producing a green gate that proves nothing.
 
 ## Running and testing the plugin
 

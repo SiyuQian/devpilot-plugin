@@ -9,6 +9,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/verify.sh\" hook --repo .",
+            "timeout": 900
+          }
+        ]
+      }
     ]
   }
 }
