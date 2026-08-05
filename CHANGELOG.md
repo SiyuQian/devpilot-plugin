@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.7.0 — 2026-08-05
+
+New skill: `devpilot:kafbat-consumer-groups` (`/kafbat`) — read-only Kafka
+consumer-group diagnosis through a kafbat / Kafka-UI instance's REST API.
+
+- **Manual invocation only.** The description opens by refusing ambient
+  triggers: mentioning Kafka, a topic, offsets, lag, or a stuck consumer is
+  explicitly *not* a trigger, and the skill body repeats the rule so a model
+  that loaded it by accident stops rather than starts curling internal hosts.
+  There is no frontmatter flag for this — the guard is the description plus the
+  in-body check, so `/kafbat` is the intended door.
+- **Read-only by construction.** No offset resets, no group deletion. When the
+  diagnosis calls for a write the skill prints the exact command and the blast
+  radius, then stops; the user runs it.
+- **The diagnosis, not just the dump.** The step that earns its keep is
+  *phantom lag*: kafbat sums `consumerLag` over every partition the group still
+  holds a committed offset for, including topics it no longer subscribes to, so
+  a healthy `STABLE` group reads as a four-figure backlog after a topic-list
+  change. The skill separates the two by `consumerId` presence and current
+  subscription, then cross-checks every live group id against the repo's own
+  consumer config to classify orphans, renames and never-started feeds.
+- **No infrastructure in this repo.** Endpoint and session cookie resolve from
+  `KAFBAT_URL` / `KAFBAT_SESSION` or a `chmod 600
+  ~/.config/devpilot/kafbat.json` of per-environment profiles. The skill is told
+  never to guess a hostname, never to inline or echo the cookie, and never to
+  write the host, cluster name or cookie into the repo under work — a `SESSION`
+  cookie is a live authenticated session, not a config value.
+- Path gotcha recorded so it is not rediscovered: `consumer-groups` is plural
+  and hyphenated; the other spellings return a Spring `No static resource`
+  body that reads like "group not found" but means "wrong path".
+
 ## 1.6.2 — 2026-07-30
 
 Three ways step 1.5 (graph enrichment) failed in real reviews, plus two bugs
