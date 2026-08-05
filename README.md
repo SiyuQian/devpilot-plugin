@@ -65,6 +65,7 @@ claude plugin install devpilot@devpilot-marketplace
 | `devpilot:confluence-reviewer` | Review Confluence docs |
 | `devpilot:trello` | Trello card workflows (uses devpilot CLI credential store) |
 | `devpilot:grilling` | Stress-test a plan or decision by interviewing you one question at a time |
+| `devpilot:kafbat-consumer-groups` | Read-only Kafka consumer-group diagnosis via a kafbat/Kafka-UI REST API — **manual invocation only** (`/kafbat`) |
 
 ## Commands
 
@@ -80,6 +81,9 @@ Thin slash-command entry points for the high-traffic skills (each just invokes t
 | `/dead-code` | `devpilot:dead-code-cleanup` |
 | `/grill` | `devpilot:grilling` |
 | `/batch-review-prs` | `devpilot:batch-review-prs` |
+| `/kafbat` | `devpilot:kafbat-consumer-groups` |
+
+`devpilot:kafbat-consumer-groups` is the one skill that will not fire on its own: talking about Kafka, lag, or a stuck consumer does not summon it. Use `/kafbat`. Point it at your own kafbat instance with `KAFBAT_URL` / `KAFBAT_SESSION`, or a `chmod 600 ~/.config/devpilot/kafbat.json` holding per-environment profiles — no hostnames or credentials live in this repo.
 
 ## Agents
 
