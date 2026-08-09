@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.7.0 — 2026-08-10
+
+- **New skill `devpilot:pr-announce` (`/pr-announce`)** — posts a freshly created PR to the
+  team's Slack review channel as a single line: `<pr-url> — <one-line summary>.` with
+  `unfurl_app_links: true`, so the GitHub unfurl carries the description and the message
+  itself stays short. Channel resolves argument → `$DEVPILOT_SLACK_PR_CHANNEL` →
+  `C0B0LEKTQKV` (VetSoft workspace).
+
+  It is a **separate** skill rather than a step inside `pr-creator` for three reasons:
+  `pr-creator` is automatic-by-default and a mandatory confirmation gate contradicts that
+  operating mode; a declined announcement must leave the PR result intact, which is cleaner
+  across a skill boundary; and PRs that were not just created still need announcing.
+
+  The draft-first gate is hard — no bypass flag, silence is not consent, and autonomous mode
+  returns the draft to the parent instead of sending. A sent message **cannot be deleted**
+  through the Slack connector, so the gate is the only safety there is.
+
+- **Encoded two connector traps that already cost a mis-sent DM.** Post to the channel by
+  explicit ID only; never DM a user found via `slack_search_users`. In this org, user search
+  surfaces only `idexx` enterprise-workspace accounts including dormant duplicates (blank
+  title, default gravatar) — the team's real accounts live in the VetSoft workspace and do
+  not appear in search at all, so a search hit is more likely dead than right. `U0A10QSM2KT`
+  ("Wesley Coetzee") is named in the skill as a known dormant duplicate.
+
+- `pr-creator` gains an optional tail hand-off to `pr-announce`, alongside the existing
+  `pr-guard` hand-off, explicitly marked as not-for-autonomous-mode and non-fatal if skipped.
+
 ## 1.6.2 — 2026-07-30
 
 Three ways step 1.5 (graph enrichment) failed in real reviews, plus two bugs
