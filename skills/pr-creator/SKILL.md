@@ -255,6 +255,13 @@ hand off to `devpilot:pr-guard` with the new PR number. It polls checks, resolve
 conflicts against the base, fixes failing checks, and re-polls in a bounded loop. Do not
 inline that logic here; this skill's job ends at a created/updated PR with its URL reported.
 
+**Optional tail step — announce it in Slack.** If the team announces PRs in a Slack review
+channel, hand off to `devpilot:pr-announce` with the fresh PR URL. That skill drafts a one-line
+message and **waits for explicit human confirmation before sending** — which is why it lives
+outside this skill's automatic-by-default mode. Do not inline it, and do not run it in
+autonomous mode (there is no human there to confirm). A declined or skipped announcement is
+**not** a failure: the PR is already created and its URL already reported.
+
 ## Update an Existing PR/MR
 
 When preflight finds an open PR for the current branch, or the user explicitly asks to update:
