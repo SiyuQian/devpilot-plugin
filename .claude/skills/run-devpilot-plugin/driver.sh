@@ -540,6 +540,17 @@ except Exception: print(sys.stdin.read()[:400] if False else "")
   bash "$CG" reset-consent --repo "$FIXTURE" >/dev/null 2>&1
 }
 
+cmd_hook() {
+  head2 "tests/refresh-default-branch_test.sh"
+  local out
+  if out=$(cd "$ROOT" && bash tests/refresh-default-branch_test.sh 2>&1); then
+    ok "refresh-default-branch hook: ${out##*$'\n'}"
+  else
+    bad "refresh-default-branch hook tests failed"
+    printf '%s\n' "$out"
+  fi
+}
+
 cmd_clean() { rm -rf "$SANDBOX"; say "removed $SANDBOX"; }
 
 report() {
@@ -556,14 +567,15 @@ case ${1:-smoke} in
   validate)     cmd_validate; report ;;
   fixture)      cmd_fixture ;;
   codegraph)    cmd_codegraph; report ;;
+  hook)         cmd_hook; report ;;
   install-live) cmd_install_live; report ;;
   headless)     shift; cmd_headless "$@"; report ;;
-  smoke)        cmd_validate; cmd_codegraph; report ;;
+  smoke)        cmd_validate; cmd_hook; cmd_codegraph; report ;;
   smoke-full)
-    cmd_validate; cmd_codegraph
+    cmd_validate; cmd_hook; cmd_codegraph
     cmd_headless present; cmd_headless missing; cmd_headless declined
     cmd_headless fallback; cmd_headless unset-root
     report ;;
   clean)        cmd_clean ;;
-  *) say "usage: driver.sh {smoke|smoke-full|validate|fixture|codegraph|install-live|headless <present|missing|declined|fallback|unset-root>|clean}"; exit 2 ;;
+  *) say "usage: driver.sh {smoke|smoke-full|validate|hook|fixture|codegraph|install-live|headless <present|missing|declined|fallback|unset-root>|clean}"; exit 2 ;;
 esac

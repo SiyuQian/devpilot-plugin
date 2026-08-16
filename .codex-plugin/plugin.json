@@ -1,6 +1,6 @@
 {
   "name": "devpilot",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "DevPilot workflow catalog for Codex: PR review and creation, repository scanning, issue triage and resolution, code quality, content creation, and productivity workflows.",
   "author": {
     "name": "Siyu Qian",

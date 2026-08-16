@@ -1,13 +1,22 @@
 # Changelog
 
-## Unreleased
+## 1.7.1 — 2026-08-16
 
-- Fixed the `SessionStart` default-branch refresh hook so a clean detached
-  worktree created from a stale local default branch moves to the latest
-  `origin/<default>` before the agent starts editing. Feature baselines remain
-  untouched.
-- The hook now stops the session when fetch fails or a stale checkout is dirty
-  or diverged, instead of silently continuing on an unverified baseline.
+- Fixed the `SessionStart` default-branch refresh hook so a clean checkout based
+  on a stale default branch — a local default branch or a detached worktree
+  created from one — moves to the latest `origin/<default>` before the agent
+  starts editing. Feature branches and detached feature baselines remain
+  untouched, and their local `<default>` ref is fast-forwarded without a
+  checkout, as before.
+- The hook now stops the session when the baseline cannot be verified — fetch
+  failure, divergence, a dirty stale checkout, or an update that did not land —
+  but only for checkouts actually based on the default branch. Off that path a
+  fetch failure warns and the session continues, so offline work on a feature
+  branch is unaffected.
+- Untracked files no longer block the hook, since neither `merge --ff-only` nor
+  `reset --hard` rewrites them.
+- Added `tests/refresh-default-branch_test.sh` (9 git-fixture scenarios), wired
+  into CI and into `driver.sh hook` / `driver.sh smoke`.
 
 ## 1.7.0 — 2026-08-10
 

@@ -84,8 +84,9 @@ Subcommands:
 
 | Command | What it does |
 |---|---|
-| `smoke` | `validate` + `codegraph`. The default. No API cost. |
+| `smoke` | `validate` + `hook` + `codegraph`. The default. No API cost. |
 | `validate` | `scripts/validate.py` through the sandbox venv. |
+| `hook` | `tests/refresh-default-branch_test.sh` — 9 git-fixture scenarios for the `SessionStart` hook. |
 | `codegraph` | 11 assertions on `scripts/codegraph.sh` in a sandbox. |
 | `fixture` | Build the Go fixture repo, print its path + base/head SHAs. |
 | `headless present\|missing\|declined ["extra prompt"]` | Real `claude -p` session executing pr-review step 1.5 with codegraph in that state. |
