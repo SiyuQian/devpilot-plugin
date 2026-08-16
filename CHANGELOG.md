@@ -13,9 +13,24 @@
   but only for checkouts actually based on the default branch. Off that path a
   fetch failure warns and the session continues, so offline work on a feature
   branch is unaffected.
-- Untracked files no longer block the hook, since neither `merge --ff-only` nor
-  `reset --hard` rewrites them.
-- Added `tests/refresh-default-branch_test.sh` (9 git-fixture scenarios), wired
+- A detached worktree is now recognised as default-based by containment in the
+  default line rather than by ref identity, so a sibling session that
+  fast-forwards the local `<default>` ref no longer makes a stale worktree
+  unrecognisable. Detached feature baselines carry their own commits, are not
+  ancestors of `origin/<default>`, and are still left alone.
+- The hook updates a detached worktree with `checkout --detach` instead of
+  `reset --hard`: `reset --hard` deletes any untracked file in the way of an
+  incoming tracked path, silently destroying uncommitted content. Untracked
+  files that do not collide still never block the session.
+- Narrowed three stops that fired on ordinary states: an unidentifiable default
+  branch (`git init` + `git remote add` with an unreachable remote) now warns
+  instead of halting; a default branch merely *ahead* of origin is reported as
+  ahead rather than diverged; and a fetch failure on a checkout that already
+  matches the last known `origin/<default>` warns instead of halting.
+- `jstr()` is now a real mirror of the one in `scripts/codegraph.sh`, including
+  the newline case, and the default-branch name parsed from `git remote show` is
+  restricted to a single whitespace-free token.
+- Added `tests/refresh-default-branch_test.sh` (17 git-fixture scenarios), wired
   into CI and into `driver.sh hook` / `driver.sh smoke`.
 
 ## 1.7.0 — 2026-08-10

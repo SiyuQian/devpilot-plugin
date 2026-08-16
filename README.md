@@ -120,7 +120,7 @@ Because name-based resolution can produce confident nonsense (a method `Close` c
 `.claude/skills/run-devpilot-plugin/` (the `/run-devpilot-plugin` skill) drives this repo:
 
 ```bash
-bash .claude/skills/run-devpilot-plugin/driver.sh smoke        # validate + codegraph state machine
+bash .claude/skills/run-devpilot-plugin/driver.sh smoke        # validate + hook tests + codegraph state machine
 bash .claude/skills/run-devpilot-plugin/driver.sh headless missing   # real claude -p session
 ```
 
@@ -131,7 +131,7 @@ The `headless` mode is the one that matters for skill edits: it copies a skill i
 CI runs two checks on every push/PR:
 
 - `scripts/validate.py` — plugin manifest JSON, skill/agent/command frontmatter, `devpilot:<skill>` cross-references, and README skill-table drift. Run it locally with `python3 scripts/validate.py` (needs PyYAML), or via `driver.sh validate`, which provisions its own venv (a Homebrew/system python3 refuses `pip install` under PEP 668).
-- `tests/refresh-default-branch_test.sh` — 9 git-fixture scenarios covering the `SessionStart` default-branch hook, including the paths where it halts the session. Run it locally with `bash tests/refresh-default-branch_test.sh`, or via `driver.sh hook`.
+- `tests/refresh-default-branch_test.sh` — 17 git-fixture scenarios covering the `SessionStart` default-branch hook, including the paths where it halts the session. Run it locally with `bash tests/refresh-default-branch_test.sh`, or via `driver.sh hook`.
 
 `driver.sh smoke` runs both, plus the codegraph checks.
 

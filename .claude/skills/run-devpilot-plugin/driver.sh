@@ -19,10 +19,11 @@
 # CODEGRAPH_TELEMETRY/CODEGRAPH_NO_DAEMON are forced off by codegraph.sh itself.
 #
 # Usage:
-#   driver.sh smoke                     # validate + codegraph  (no API cost)
+#   driver.sh smoke                     # validate + hook + codegraph  (no API cost)
 #   driver.sh validate                  # scripts/validate.py
+#   driver.sh hook                      # tests/refresh-default-branch_test.sh
 #   driver.sh fixture                   # build the Go fixture repo, print refs
-#   driver.sh codegraph                 # 11 assertions on the wrapper
+#   driver.sh codegraph                 # 18 assertions on the wrapper
 #   driver.sh install-live              # REAL ~57MB bundle download into the sandbox
 #   driver.sh headless present|missing|declined ["extra prompt"]
 #   driver.sh smoke-full                # smoke + all three headless probes
