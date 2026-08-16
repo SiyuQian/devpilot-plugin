@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Fixed the `SessionStart` default-branch refresh hook so a clean detached
+  worktree created from a stale local default branch moves to the latest
+  `origin/<default>` before the agent starts editing. Feature baselines remain
+  untouched.
+- The hook now stops the session when fetch fails or a stale checkout is dirty
+  or diverged, instead of silently continuing on an unverified baseline.
+
 ## 1.7.0 — 2026-08-10
 
 - **New skill `devpilot:pr-announce` (`/pr-announce`)** — posts a freshly created PR to the
