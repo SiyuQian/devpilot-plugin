@@ -15,3 +15,4 @@ jobs:
           python-version: "3.12"
       - run: pip install pyyaml
       - run: python3 scripts/validate.py
+      - run: bash tests/refresh-default-branch_test.sh

@@ -57,12 +57,15 @@ No `apt-get` / `brew install` step exists for this repo.
 bash .claude/skills/run-devpilot-plugin/driver.sh smoke
 ```
 
-That is validate + the full `codegraph.sh` state machine, no API cost. Verified
-output:
+That is validate + the `SessionStart` hook tests + the full `codegraph.sh` state
+machine, no API cost. Verified output:
 
 ```
 == scripts/validate.py ==
   PASS validate.py: OK — 28 skills, manifests, agents, commands, cross-refs, README all validated.
+
+== tests/refresh-default-branch_test.sh ==
+  PASS refresh-default-branch hook: 1..17
 
 == scripts/codegraph.sh state machine (sandboxed) ==
   PASS no binary → needs_install
@@ -75,18 +78,26 @@ output:
   PASS stale index → mode=fallback (fails closed)
   PASS after opt-out, status → declined
   PASS after opt-out, ensure does not build → declined
+  PASS after opt-out, no re-ask (action=ready)
   PASS reset-consent clears the marker
+  PASS wrapper carries the devpilot-codegraph-wrapper marker
+  PASS --at indexes a detached worktree at head → mode=built
+  PASS --at left the reviewed checkout clean
+  PASS no CodeGraph → devpilot graph fallback → ready (no install prompt)
+  PASS devpilot payload normalised: lines=null, contradiction_allowed=false
+  PASS tests_for on the devpilot backend → unsupported, not a fake empty
 
-ALL PASS — 11 checks
+ALL PASS — 20 checks
 ```
 
 Subcommands:
 
 | Command | What it does |
 |---|---|
-| `smoke` | `validate` + `codegraph`. The default. No API cost. |
+| `smoke` | `validate` + `hook` + `codegraph`. The default. No API cost. |
 | `validate` | `scripts/validate.py` through the sandbox venv. |
-| `codegraph` | 11 assertions on `scripts/codegraph.sh` in a sandbox. |
+| `hook` | `tests/refresh-default-branch_test.sh` — 17 git-fixture scenarios for the `SessionStart` hook. |
+| `codegraph` | 18 assertions on `scripts/codegraph.sh` in a sandbox. |
 | `fixture` | Build the Go fixture repo, print its path + base/head SHAs. |
 | `headless present\|missing\|declined ["extra prompt"]` | Real `claude -p` session executing pr-review step 1.5 with codegraph in that state. |
 | `install-live` | Really downloads the CodeGraph bundle (~57 MB, ~280 MB unpacked) **into the sandbox**. |
