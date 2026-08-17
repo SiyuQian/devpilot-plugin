@@ -1,5 +1,5 @@
 ---
-description: Discover every open PR waiting on your review and review them one by one
+description: Discover every open PR waiting on your review, review them one by one, and auto-fix your own
 ---
 
 Invoke the `devpilot:batch-review-prs` skill with these arguments: $ARGUMENTS

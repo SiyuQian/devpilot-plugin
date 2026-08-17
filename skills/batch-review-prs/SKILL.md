@@ -1,16 +1,20 @@
 ---
 name: batch-review-prs
-description: "Use this skill whenever the user wants to check their review queue, see pending reviews, review all their PRs, says 'review my PRs', 'check my review inbox', 'what PRs need my review', 'review everything assigned to me', or any variation of batch-reviewing pending pull requests. Also trigger when the user says /batch-review-prs or /review-inbox. Even if the user just says 'review my stuff' or 'catch up on reviews', this skill likely applies."
+description: "Use this skill whenever the user wants to check their review queue, see pending reviews, review all their PRs, says 'review my PRs', 'check my review inbox', 'what PRs need my review', 'review everything assigned to me', or any variation of batch-reviewing pending pull requests. Also trigger when the user says /batch-review-prs or /review-inbox, or asks to review and fix their own PRs. Even if the user just says 'review my stuff' or 'catch up on reviews', this skill likely applies."
 ---
 
 # Batch Review PRs
 
 Discovers all open PRs that need your review on GitHub — ones requesting you, ones you've reviewed
-before, **and your own** — and reviews them via `devpilot:pr-review`.
+before, **and your own** — and reviews them via `devpilot:pr-review`. On **your own** PRs it does
+not stop at the review: it applies the findings it just posted, pushes the fix, and closes the
+threads it fixed (Step 3.5). A review you wrote against your own work is a to-do list you already
+have the answers to; leaving it unactioned is the waste this skill exists to remove.
 
-Needs only `gh`. Adds claim labels, already-reviewed-at-HEAD filtering, and local-checkout
-syncing. This is the single review-queue skill — the older `pr-review-queue` (which discovered
-the queue via `devpilot github prs review-queue`) was removed as a duplicate.
+Needs only `gh`. Adds claim labels, already-reviewed-at-HEAD filtering, local-checkout
+syncing, and the self-authored auto-fix pass. This is the single review-queue skill — the older
+`pr-review-queue` (which discovered the queue via `devpilot github prs review-queue`) was removed
+as a duplicate.
 
 ## Context discipline (read first)
 
@@ -18,7 +22,8 @@ Discovery, filtering, and repo-sync produce large volumes of raw `gh api` JSON, 
 
 1. The compact PR table returned by the discovery subagent (Step 1).
 2. Per-PR review results (Step 3).
-3. The final summary (Step 4).
+3. Per-PR fix results for self-authored PRs (Step 3.5) — one line each, never a diff.
+4. The final summary (Step 4).
 
 So the entire discover → filter → repo-sync pipeline runs inside **one** subagent (Step 1), which returns only a small structured table. Labeling is folded into each review dispatch (Step 3) so it never runs in the main context either. Do **not** run the `gh api --paginate` loops or `git fetch` calls directly in the main agent.
 
@@ -107,7 +112,10 @@ Agent({
 > **Return ONLY this** — no logs, no JSON dumps, no narration:
 > - The resolved `first_name` (the reviewer's, for labeling).
 > - A markdown table with columns: `#`, `repo` (owner/repo), `pr` (number), `author` (append `(self)` for self-authored), `self` (`yes` / `no`), `title`, `url`, `local_path` (absolute path or `remote-only`).
->   The explicit `self` column is not redundant with the `(self)` suffix — Step 3 reads that column to decide the review event cap.
+>   The explicit `self` column is not redundant with the `(self)` suffix — Step 3 reads it to decide
+>   the review event cap, and Step 3.5 reads it to decide whether the PR gets an auto-fix pass.
+>   `local_path` is likewise load-bearing twice: it gives the reviewer code context, and it is the
+>   only place Step 3.5 can apply a fix.
 > - If nothing survives filtering, return exactly: `INBOX CLEAR`.
 
 When the subagent returns `INBOX CLEAR`, tell the user their inbox is clear and stop.
@@ -125,10 +133,13 @@ Found N PRs needing your review:
 | 2 | owner/repo | #124 | you (self) | yes | My own PR | https://github.com/owner/repo/pull/124 |
 ```
 
-Carry the `Self` column through from the discovery table — Step 3 needs it, and dropping it here is
-how the self-approval cap gets lost.
+Carry the `Self` column through from the discovery table — Steps 3 and 3.5 both need it, and
+dropping it here is how the self-approval cap and the auto-fix pass get lost.
 
-**Interactive mode (default):** ask which PRs to review — all, specific numbers, or exclude specific ones.
+**Interactive mode (default):** ask which PRs to review — all, specific numbers, or exclude specific
+ones. Say plainly in the same message that any PR marked `Self: yes` will also be **fixed and
+pushed** after its review (Step 3.5); this prompt is the user's consent point for that push, so do
+not bury it.
 
 **Auto/loop mode:** skip confirmation and review every PR in the table (the subagent already applied all reliable filters). Do **not** add client-side heuristics like `updatedAt` filtering.
 
@@ -157,13 +168,156 @@ Report back ONLY the result: approved, commented (with issue count), or skipped 
 })
 ```
 
-After each agent completes, report its one-line result before starting the next.
+After each agent completes, report its one-line result. If that PR is self-authored, run **Step
+3.5** for it now, before dispatching the next PR's review — fixing while the PR is the one you
+just reasoned about keeps the review and the fix on the same head SHA. Then start the next.
 
 **The `reviewing:<name>` label is deliberately never removed.** It is a durable claim, not
 transient run state: together with the `≥2 other reviewers` filter in Step 1 it is what stops
 several people (or several runs) from spending tokens re-reviewing the same PR. Do not add a
 cleanup step that strips the label after reviewing — that would defeat the whole mechanism.
 Accumulated claim labels on a PR are the intended, useful signal of who has already covered it.
+
+### Step 3.5: Auto-fix findings on your own PRs
+
+Runs **only for PRs whose `self` column is `yes`**, immediately after that PR's review agent
+returns and before the next PR's review is dispatched. Someone else's PR is theirs to fix — there
+the review is the entire deliverable. On your own, the review you just posted is a to-do list you
+already wrote the answers to, so act on it.
+
+**Skip the fix pass** — and say which reason in the Step 4 summary — when any of these hold:
+
+- `local_path` is `remote-only`. There is nothing to edit. Do not clone: adding checkouts to the
+  user's disk is not this skill's job.
+- The review posted zero inline findings (result `approved`, or `commented (0 issues)`).
+- The local checkout is **dirty** (`git status --porcelain` non-empty). Uncommitted or untracked
+  work in the user's tree is never something to stash, reset, clobber, or sweep into a fix commit.
+- The PR branch already carries **3 or more** `Devpilot-Auto-Fix` commits (loop bound, below).
+
+Dispatch one `general-purpose` agent per qualifying PR and **wait for it** before moving on:
+
+```
+Agent({
+  description: "Auto-fix self-review findings on owner/repo#123",
+  subagent_type: "general-purpose",
+  prompt: <the FIX PROMPT below, with owner/repo, PR number, URL, and local_path filled in>
+})
+```
+
+**FIX PROMPT** (paste verbatim, substituting the placeholders):
+
+> You have the `devpilot:resolving-review-threads` skill available. `devpilot:pr-review` just
+> reviewed **my own** PR `<url>` and posted inline findings. Apply them, push, and close the threads
+> you fixed. Work inside `<local_path>`. Do not narrate — return only the one-line result at the end.
+>
+> **1. Read back the findings.** Anchor on the same head SHA and the same `devpilot:pr-review`
+> marker the queue filter uses, so you read *that* review and not an older or foreign one:
+>
+> ```bash
+> cd "<local_path>"
+> repo="<owner/repo>"; num=<pr-number>
+> head_sha=$(gh api "repos/$repo/pulls/$num" --jq '.head.sha')
+> review_id=$(gh api --paginate "repos/$repo/pulls/$num/reviews" \
+>   --jq "[.[] | select(.commit_id == \"$head_sha\") | select((.body // \"\") | test(\"devpilot:pr-review\")) | .id] | last")
+> [ -n "$review_id" ] || { echo "SKIP: no devpilot review at HEAD"; exit 0; }
+> gh api --paginate "repos/$repo/pulls/$num/comments" \
+>   --jq "[.[] | select(.pull_request_review_id == $review_id and .in_reply_to_id == null)
+>         | {id, path, line: (.line // .original_line), body}]"
+> ```
+>
+> `(.body // "")` is required for the same reason it is in the discovery filter: a bare APPROVE
+> carries a `null` body and `null | test(...)` is a hard jq error that empties the whole list —
+> which here would look like "the review had no findings" and silently skip a PR that has plenty.
+> `.line` is `null` on an outdated comment, hence the `.original_line` fallback.
+>
+> **2. Guard the checkout before touching it.**
+>
+> ```bash
+> [ -z "$(git status --porcelain)" ] || { echo "SKIP: working tree dirty"; exit 0; }
+> orig_ref=$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)
+> gh pr checkout "$num" -R "$repo" || { echo "SKIP: could not check out PR branch"; exit 0; }
+> [ "$(git rev-parse HEAD)" = "$head_sha" ] || { git checkout "$orig_ref"; echo "SKIP: head moved since review"; exit 0; }
+> base=$(gh api "repos/$repo/pulls/$num" --jq '.base.ref')
+> git fetch origin "$base" --quiet
+> rounds=$(git log "origin/$base..HEAD" --grep='^Devpilot-Auto-Fix:' --oneline | wc -l | tr -d ' ')
+> [ "$rounds" -lt 3 ] || { git checkout "$orig_ref"; echo "SKIP: fix-loop cap ($rounds rounds)"; exit 0; }
+> ```
+>
+> The `head_sha` re-check is not paranoia: the findings you are about to apply are anchored to
+> `path:line` **as of that SHA**. If someone (or another session) pushed while the review ran,
+> those anchors point at lines that have moved, and applying them edits the wrong code. Bail and
+> let the next queue run re-review the new head.
+>
+> `gh pr checkout` refuses rather than clobbers when a local branch of the same name has diverged;
+> treat that failure as `SKIP: could not check out PR branch` and do **not** work around it with
+> `-f`, a reset, or a delete-and-recreate.
+>
+> Restore `orig_ref` with `git checkout "$orig_ref"` before you return, on **every** exit path
+> including the failure ones. Leaving the user's checkout parked on a PR branch is a side effect
+> they did not ask for and will not notice until it bites them.
+>
+> **3. Fix everything mechanically fixable — every severity, nits included.** Attempt a fix for
+> each finding regardless of its severity tag. Skip one only when applying it would mean:
+>
+> - **deciding something the finding does not settle** — two defensible behaviors and the comment
+>   picks neither;
+> - **changing what the PR set out to do**, rather than correcting how it does it;
+> - **editing code far outside this PR's diff** to satisfy the comment;
+> - **guessing at information you do not have** — an unstated invariant, an external contract or
+>   config you cannot read.
+>
+> "It's only a nit" and "low severity" are **not** skip reasons. A nit with an obvious mechanical
+> fix gets fixed; that is the whole point of doing this on your own PR.
+>
+> Open and read the file around each anchor before editing — never patch from the comment text
+> alone, which is a summary of the problem, not of the surrounding code. When two findings touch
+> overlapping lines, resolve them together in one edit rather than sequentially.
+>
+> **4. Verify, then commit and push.** Run the repo's own test and lint commands (from
+> `CLAUDE.md` / `AGENTS.md` / `Makefile` / `package.json`) before committing. A fix that breaks the
+> build is worse than the finding it closed. If a fix cannot be made to pass, revert *that hunk*
+> and move it to the skipped list — never commit red.
+>
+> Stage **only the files you edited**, by path. `git add -A` sweeps in whatever the test and lint
+> run left behind — coverage files, caches, build output, a refreshed lockfile — and those land in
+> the PR under a commit message that claims they are review fixes.
+>
+> ```bash
+> git status --porcelain          # confirm nothing unexpected appeared
+> git add <each file you edited>
+> git commit -F - <<'MSG'
+> fix: address self-review findings on #<pr-number>
+>
+> <one line per applied finding: path:line — what changed>
+>
+> Devpilot-Auto-Fix: true
+> MSG
+> git push
+> ```
+>
+> The `Devpilot-Auto-Fix` trailer is what step 2 counts to bound the loop — do not drop it,
+> reword it, or move it into the subject line. Push with a plain `git push`: **never** `--force`
+> or `--force-with-lease`, never rebase, never amend a commit that is already on the remote. Same
+> rule as `devpilot:pr-guard`, and for the same reason.
+>
+> **5. Close the threads.** Use `devpilot:resolving-review-threads` and follow it exactly — reply
+> first, resolve second, one thread at a time:
+>
+> - **Fixed** → reply naming the change and the new commit SHA, then resolve the thread.
+> - **Skipped** → reply stating concretely which of the four skip cases applies and why, and
+>   **leave the thread open**. Never resolve a finding you did not fix.
+>
+> **Return ONLY** one line: `fixed: N, skipped: M, pushed <sha>` — or `skipped (<reason>)` if you
+> never reached a commit. No diffs, no logs, no narration.
+
+**Why the loop bound.** Pushing a fix moves the head SHA, so Step 1's already-reviewed-at-HEAD
+filter stops matching and the next run re-reviews the PR. That is deliberate — the incremental
+pass is what verifies the fix actually holds. What it must not become is a ping-pong that burns
+tokens forever, so the fix agent refuses to add a fourth `Devpilot-Auto-Fix` commit to the same
+branch. Three rounds that failed to converge is a signal for a human, not a reason for a fourth.
+
+**Do not run this pass on PRs authored by someone else**, even when you have a local checkout and
+the fix looks trivial. Pushing to another person's branch is not a review outcome.
 
 ### Step 4: Summary
 
@@ -172,11 +326,18 @@ After all agents complete:
 ```
 ## Review Summary
 
-| PR | Link | Result |
-|----|------|--------|
-| owner/repo#123 | [View](https://github.com/owner/repo/pull/123) | Approved |
-| owner/repo#456 | [View](https://github.com/owner/repo/pull/456) | Commented (2 issues) |
-| owner/repo#789 | [View](https://github.com/owner/repo/pull/789) | Skipped (merged) |
+| PR | Link | Self | Result | Auto-fix |
+|----|------|------|--------|----------|
+| owner/repo#123 | [View](https://github.com/owner/repo/pull/123) | no | Approved | — |
+| owner/repo#456 | [View](https://github.com/owner/repo/pull/456) | no | Commented (2 issues) | — |
+| owner/repo#789 | [View](https://github.com/owner/repo/pull/789) | no | Skipped (merged) | — |
+| owner/repo#790 | [View](https://github.com/owner/repo/pull/790) | yes | Commented (5 issues) | fixed 4, skipped 1, pushed `a1b2c3d` |
+| owner/repo#791 | [View](https://github.com/owner/repo/pull/791) | yes | Commented (3 issues) | skipped (working tree dirty) |
 
-Reviewed N PRs. Done!
+Reviewed N PRs, auto-fixed M of my own. Done!
 ```
+
+The `Auto-fix` column is `—` for anything not self-authored. For a self-authored PR it carries the
+fix agent's one-line result verbatim, **including the skip reason** — a silent blank there reads as
+"nothing to fix" when the real story is usually a dirty checkout or a missing local clone, both of
+which the user can act on in seconds once they see them.

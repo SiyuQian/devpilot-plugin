@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- `devpilot:batch-review-prs` no longer stops at reviewing your own PRs. A new
+  Step 3.5 runs after each self-authored review: it reads back the inline
+  findings it just posted, applies every one that is mechanically fixable (all
+  severities, nits included), runs the repo's own tests and lint, commits with a
+  `Devpilot-Auto-Fix` trailer, pushes to the PR branch, then replies and resolves
+  the threads it fixed via `devpilot:resolving-review-threads`. Findings that
+  need a design decision, change the PR's intent, sprawl outside the diff, or
+  depend on information the agent does not have are left as open threads with a
+  reply explaining which case applies.
+- The fix pass refuses to run rather than doing anything destructive: it skips a
+  dirty working tree instead of stashing or resetting it, skips `remote-only`
+  repos instead of cloning, restores the original checked-out ref on every exit
+  path, and never force-pushes, rebases, or amends a pushed commit. It also
+  stops after three `Devpilot-Auto-Fix` commits on one branch, so the
+  review → fix → re-review cycle cannot ping-pong indefinitely.
+- Self-authored PRs are the only ones eligible for the fix pass. The Step 2
+  confirmation now states up front that `Self: yes` rows will be fixed and
+  pushed, and the Step 4 summary gained `Self` and `Auto-fix` columns carrying
+  the per-PR fix result or skip reason.
+
 ## 1.7.1 — 2026-08-16
 
 - Fixed the `SessionStart` default-branch refresh hook so a clean checkout based
