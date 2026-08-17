@@ -141,7 +141,7 @@ ones. Say plainly in the same message that any PR marked `Self: yes` will also b
 pushed** after its review (Step 3.5); this prompt is the user's consent point for that push, so do
 not bury it.
 
-**Auto/loop mode:** skip confirmation and review every PR in the table (the subagent already applied all reliable filters). Do **not** add client-side heuristics like `updatedAt` filtering.
+**Auto/loop mode:** skip confirmation and review every PR in the table (the subagent already applied all reliable filters). Do **not** add client-side heuristics like `updatedAt` filtering. Note what skipping Step 2 costs: there is then no consent point anywhere in the run, so self-authored PRs get fixed and **pushed** unattended. That is auto mode working as intended — and it is exactly why the interactive prompt above has to spell the push out, since that prompt is the only place a user ever sees it coming.
 
 ### Step 3: Review (sequential dispatch, labeling folded in)
 
@@ -194,7 +194,10 @@ already wrote the answers to, so act on it.
 - The review posted zero inline findings (result `approved`, or `commented (0 issues)`).
 - The local checkout is **dirty** (`git status --porcelain` non-empty). Uncommitted or untracked
   work in the user's tree is never something to stash, reset, clobber, or sweep into a fix commit.
-- The PR branch already carries **3 or more** `Devpilot-Auto-Fix` commits (loop bound, below).
+The loop bound (below) is deliberately **not** in that list: counting `Devpilot-Auto-Fix` commits
+needs the checkout, which the main agent never touches. Dispatch the fix agent anyway and let it
+return `SKIP: fix-loop cap (N rounds)` or `SKIP: review backstop (N devpilot reviews)` — the Step 4
+summary carries its line either way.
 
 Dispatch one `general-purpose` agent per qualifying PR and **wait for it** before moving on:
 
@@ -220,12 +223,23 @@ Agent({
 > repo="<owner/repo>"; num=<pr-number>
 > head_sha=$(gh api "repos/$repo/pulls/$num" --jq '.head.sha')
 > review_id=$(gh api --paginate "repos/$repo/pulls/$num/reviews" \
->   --jq "[.[] | select(.commit_id == \"$head_sha\") | select((.body // \"\") | test(\"devpilot:pr-review\")) | .id] | last")
+>   --jq ".[] | select(.commit_id == \"$head_sha\") | select((.body // \"\") | test(\"devpilot:pr-review\")) | .id" \
+>   | tail -1)
 > [ -n "$review_id" ] || { echo "SKIP: no devpilot review at HEAD"; exit 0; }
 > gh api --paginate "repos/$repo/pulls/$num/comments" \
->   --jq "[.[] | select(.pull_request_review_id == $review_id and .in_reply_to_id == null)
->         | {id, path, line: (.line // .original_line), body}]"
+>   --jq ".[] | select(.pull_request_review_id == $review_id and .in_reply_to_id == null)
+>         | {id, path, line: (.line // .original_line), body}" | jq -s .
 > ```
+>
+> **Stream the jq, never wrap it in `[...]`.** Under `--paginate`, `gh` applies `--jq` to each page
+> separately and concatenates the outputs (`--slurp` is rejected outright when `--jq` is present),
+> so an array-wrapping filter emits one array *per page*. `[...] | last` fails worse than merely
+> returning the wrong page: on a page with no match jq prints the literal `null`, which is a
+> non-empty string, so `[ -n "$review_id" ]` sails past the guard and the comment filter degrades
+> to `.pull_request_review_id == null` — legal jq that matches nothing. A PR whose review is full
+> of findings then reads as "no findings" and is silently skipped. Stream the values and combine
+> them in the shell instead — `tail -1` for the newest matching review, `jq -s .` to gather the
+> comments — which is the same shape as the discovery filter's `... | head -1` in Step 1.
 >
 > `(.body // "")` is required for the same reason it is in the discovery filter: a bare APPROVE
 > carries a `null` body and `null | test(...)` is a hard jq error that empties the whole list —
@@ -243,6 +257,9 @@ Agent({
 > git fetch origin "$base" --quiet
 > rounds=$(git log "origin/$base..HEAD" --grep='^Devpilot-Auto-Fix:' --oneline | wc -l | tr -d ' ')
 > [ "$rounds" -lt 3 ] || { git checkout "$orig_ref"; echo "SKIP: fix-loop cap ($rounds rounds)"; exit 0; }
+> posted=$(gh api --paginate "repos/$repo/pulls/$num/reviews" \
+>   --jq ".[] | select((.body // \"\") | test(\"devpilot:pr-review\")) | .id" | wc -l | tr -d ' ')
+> [ "$posted" -le 10 ] || { git checkout "$orig_ref"; echo "SKIP: review backstop ($posted devpilot reviews)"; exit 0; }
 > ```
 >
 > The `head_sha` re-check is not paranoia: the findings you are about to apply are anchored to
@@ -294,13 +311,26 @@ Agent({
 >
 > Devpilot-Auto-Fix: true
 > MSG
-> git push
+> git log -1 --format=%B | grep -q '^Devpilot-Auto-Fix:' \
+>   || { git checkout "$orig_ref"; echo "SKIP: fix commit has no Devpilot-Auto-Fix trailer"; exit 0; }
+> git push \
+>   || { git checkout "$orig_ref"; echo "SKIP: push failed — fixes are committed locally, nothing published"; exit 0; }
 > ```
 >
 > The `Devpilot-Auto-Fix` trailer is what step 2 counts to bound the loop — do not drop it,
-> reword it, or move it into the subject line. Push with a plain `git push`: **never** `--force`
-> or `--force-with-lease`, never rebase, never amend a commit that is already on the remote. Same
-> rule as `devpilot:pr-guard`, and for the same reason.
+> reword it, or move it into the subject line, and **verify it landed before pushing**. A commit
+> that lost it is the one way this pass becomes the runaway it is designed not to be: the next
+> round counts zero rounds, so review → fix → push repeats with nothing to stop it. If the check
+> fails, amend the trailer in and re-run it — the commit has not been pushed yet, and the
+> never-amend rule below is about commits that are already on the remote. Only give up if it is
+> still missing after the amend.
+>
+> Push with a plain `git push`: **never** `--force` or `--force-with-lease`, never rebase, never
+> amend a commit that is already on the remote. Same rule as `devpilot:pr-guard`, and for the same
+> reason. **Check that the push succeeded** — a protected branch, a lost race with another push,
+> or missing write access all fail here. On failure, stop: do not report `pushed`, and do not go
+> on to step 5. Replying "fixed in `<sha>`" and resolving threads against a commit that never
+> reached the remote closes findings that are still live on the PR.
 >
 > **5. Close the threads.** Use `devpilot:resolving-review-threads` and follow it exactly — reply
 > first, resolve second, one thread at a time. Post every reply **without asking**; nobody is
@@ -319,6 +349,19 @@ filter stops matching and the next run re-reviews the PR. That is deliberate —
 pass is what verifies the fix actually holds. What it must not become is a ping-pong that burns
 tokens forever, so the fix agent refuses to add a fourth `Devpilot-Auto-Fix` commit to the same
 branch. Three rounds that failed to converge is a signal for a human, not a reason for a fourth.
+
+**And it terminates.** Rounds 1–3 each post a review and push a fix. Round 4 posts its review,
+hits the cap, and pushes nothing — so the head SHA stops moving, that fourth review now matches
+Step 1's already-reviewed-at-HEAD filter, and the PR drops out of the queue for good. Four reviews
+and three fix commits is the worst case, not an open-ended cycle.
+
+**Two counters, because one of them is erasable.** `rounds` counts trailers in the branch's own
+commits, and any history rewrite — a rebase onto a moved base, an interactive squash, a force-push
+from another tool — erases them and silently resets the bound to zero. The `posted` guard counts
+`devpilot:pr-review` reviews on the PR instead: those are server-side records that no git operation
+can rewrite. A converging PR tops out at four of them, so the ceiling of 10 only trips on something
+genuinely cycling. It is a backstop, not the working limit — if it ever fires, the trailer bound
+failed and that is worth reading the branch history over.
 
 **Do not run this pass on PRs authored by someone else**, even when you have a local checkout and
 the fix looks trivial. Pushing to another person's branch is not a review outcome.

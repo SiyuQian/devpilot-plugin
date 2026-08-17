@@ -16,7 +16,10 @@
   repos instead of cloning, restores the original checked-out ref on every exit
   path, and never force-pushes, rebases, or amends a pushed commit. It also
   stops after three `Devpilot-Auto-Fix` commits on one branch, so the
-  review → fix → re-review cycle cannot ping-pong indefinitely.
+  review → fix → re-review cycle cannot ping-pong indefinitely — worst case is
+  four reviews and three fix commits before the PR leaves the queue. A second
+  backstop counts posted `devpilot:pr-review` reviews, which survive the history
+  rewrites that would erase the commit trailers and reset the first bound.
 - `devpilot:pr-review` now states that posting is automatic and never gated on a
   confirmation. A new `<posting_is_not_optional>` rule in the skill, a "Post
   without asking" section in `references/posting.md`, and four rationalization-table
