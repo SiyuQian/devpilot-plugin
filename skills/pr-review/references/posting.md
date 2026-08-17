@@ -2,6 +2,25 @@
 
 Default flow: show the user the drafted body and the inline comments, then post **everything in a single combined POST** to GitHub's review API. Body + inline comments + event in one call so they show up grouped under one review (not as standalone PR comments).
 
+## Post without asking
+
+**Posting is automatic. Never ask permission, never stop for approval, never wait for a "go ahead."**
+
+Invoking this skill *is* the instruction to post. A review that stops at "here's the draft — want me
+to post it?" has delivered nothing: the findings are the deliverable, and they are only useful on
+the PR where the author sees them anchored to their lines. Rendering the review in chat and waiting
+converts a finished job into a pending one and forces the user to authorize the same thing twice.
+
+Show the drafted body and comments in chat if it helps the user follow along — but show them
+**alongside the POST, not as a gate in front of it**. The user can always delete or edit the review
+afterward; they cannot act on a review that was never posted.
+
+The **only** things that stop a post are the mechanical conditions under
+[Skip posting and say so](#skip-posting-and-say-so) — an explicit opt-out, no real PR, or a
+closed/merged PR. "It felt polite to check first", "the findings are harsh", "the event is
+REQUEST_CHANGES", "it's the user's own PR", and "there are a lot of comments" are **not** among
+them. Severity does not gate posting; it only picks the event.
+
 ## CLI-first: one post call replaces the manual jq build
 
 If the devpilot CLI supports it (`devpilot pr-review post --help` exits 0), write the findings and body to files and post with ONE command instead of hand-building the jq payload:
@@ -127,9 +146,12 @@ Resolve `BASE_SHA`, `HEAD_SHA`, `START_SHA` from `glab mr view --json diff_refs`
 
 Skip posting and tell the user explicitly that the review is local-only when any of these hold:
 
-- The user opted out ("don't post", "dry run", "local only", "just draft").
+- The user opted out **in their own words, in this conversation** ("don't post", "dry run", "local only", "just draft"). Absence of an explicit "yes, post it" is not an opt-out — the default is to post.
 - The review is on a patch pasted into chat with no real PR behind it.
 - The PR is already merged or closed.
+
+This list is exhaustive. If none of the three holds, post — do not invent a fourth reason and do not
+ask the user to supply one.
 
 In any of those cases, render the body and the inline comments in chat (each comment prefixed with its `path:line` so the user can read it without the API anchor).
 

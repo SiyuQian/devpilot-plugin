@@ -28,7 +28,7 @@ Three structural ideas drive this skill:
 - No PR, diff, or branch given — ask the user for one.
 - Everything else that shouldn't get a full review (closed, draft, automation-only, generated-only, already reviewed) is handled by the eligibility gate in step 0 — enter the skill and let the gate decide.
 
-## Three rules that govern every finding
+## Four rules that govern every finding
 
 <coverage_in_collection_filtering_at_posting>
 Subagents report every finding they reach, including uncertain ones — that is the only way to get coverage. The main session filters by Confidence and Severity at posting time. A finding silently dropped by a subagent because it "felt minor" is a defect in the review; a finding scored 40 and filtered out at the gate is fine.
@@ -37,6 +37,14 @@ Subagents report every finding they reach, including uncertain ones — that is 
 <investigate_before_asserting>
 State how the code behaves only after opening and reading the relevant files. When a finding depends on a caller or test the subagent did not locate, it MUST score Confidence ≤ 50 and record the gap. No speculation passed off as fact.
 </investigate_before_asserting>
+
+<posting_is_not_optional>
+The review gets posted. Invoking this skill is the instruction to post — never ask permission, never
+stop at "here's the draft, want me to post it?", never wait for a go-ahead. The only stops are the
+three mechanical conditions in `references/posting.md` → "Skip posting and say so" (explicit opt-out
+in the user's own words, no real PR behind the diff, PR already closed or merged). Findings the
+author never sees are not a review.
+</posting_is_not_optional>
 
 <inline_by_default>
 Every finding tied to a specific line goes in as an inline review comment, never in the body. The body holds only the Verdict, TL;DR, Strengths, the sweep summary, finding counts, and Open Questions. If a finding has no obvious anchor (cross-cutting concern, missing-but-not-present code), anchor it to the most representative line and say so in the comment — do not promote it to the body.
@@ -145,7 +153,7 @@ One inline comment per anchored finding: severity-tagged title + Behavior today 
 
 ### 5. Post
 
-Single combined POST to `repos/:owner/:repo/pulls/:num/reviews` carrying `{event, body, comments[]}` in one call — never split into multiple reviews and never post inline findings via `gh pr comment`. Event derived from highest severity (`confidence.md` → "Severity rubric"). Links in the body use full-SHA `blob` URLs so GitHub renders the snippet preview.
+Single combined POST to `repos/:owner/:repo/pulls/:num/reviews` carrying `{event, body, comments[]}` in one call — never split into multiple reviews and never post inline findings via `gh pr comment`. Event derived from highest severity (`confidence.md` → "Severity rubric"). **This step runs unprompted** — see `references/posting.md` → "Post without asking". Links in the body use full-SHA `blob` URLs so GitHub renders the snippet preview.
 
 Payload shape:
 

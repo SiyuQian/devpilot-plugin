@@ -40,10 +40,18 @@ Common shortcuts the reviewer may reach for, and what to do instead. The "Realit
 | "The graph tool errored, so I'll explain in the body why it's missing." | You know it failed; you do not know why. "This plugin install doesn't ship the wrapper" and "that backend doesn't exist" have both been published and both been wrong. Quote the tool's own reason verbatim (`graph unavailable: <reason>`) and stop there. A cause you have not checked with a path listing or a `--help` exit code does not go in a posted artifact. |
 | "`preflight` says `index_stale`, so the graph can't help on this PR." | Almost always a missing `--at <head-sha>`: `gh pr view`/`gh pr diff` never check head out, so the index describes the default branch. Re-run `ensure --repo . --at <head-sha>` and pass the returned `.repo` to the preflight before falling back. |
 | "The graph payload has `callers.confident: true`, so a zero count kills this finding." | Not on every backend. When `data.contradiction_allowed` is `false` (the `devpilot` backend), the count may corroborate but must never contradict — that backend does not expose per-symbol resolution diagnostics. Treat the finding as Unsupported and leave its score alone. |
+| "I'll show the draft and let the user confirm before posting." | Invoking the skill was the confirmation. Post, then show. A draft awaiting approval is an unfinished job handed back to the user. |
+| "These findings are harsh / the event is REQUEST_CHANGES — I should check first." | Severity picks the event, not whether to post. A blocking finding is the one the author most needs on the PR. |
+| "It's the user's own PR, so posting feels redundant." | Their own PR is where the findings are most actionable — `devpilot:batch-review-prs` reads them back to auto-fix from. An unposted self-review is unreadable by anything downstream. |
+| "There are 12 comments; that's a lot to dump on a PR unasked." | Comment count is not a permission trigger. Filter by confidence per `confidence.md`; post whatever survives. |
 
 ## Self-check before posting
 
 Before running `gh pr review`, run through this list. A "yes" on any item means the review is not ready; fix the underlying issue and re-check.
+
+**This checklist is not a permission gate.** It has exactly one failure mode — the review is not
+ready, so fix it and post. "The user hasn't confirmed" is not on the list and never will be; see
+`posting.md` → "Post without asking".
 
 - Eligibility gate skipped — PR turned out to be draft / merged / dependabot / already reviewed.
 - Fanout collapsed: some core agents didn't run (or F skipped despite new dependencies), or the agents ran sequentially in the main session.

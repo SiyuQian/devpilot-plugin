@@ -42,7 +42,7 @@ claude plugin install devpilot@devpilot-marketplace
 | `devpilot:pr-creator` | Create or update pull requests |
 | `devpilot:pr-guard` | Watch a PR until it's mergeable and CI is green (resolves conflicts, fixes failing checks) |
 | `devpilot:pr-announce` | Announce a PR in the team's Slack review channel (draft first, send only on confirmation) |
-| `devpilot:batch-review-prs` | Review-inbox sweep with `gh` only — claim labels, already-reviewed-at-HEAD skip, local-checkout sync |
+| `devpilot:batch-review-prs` | Review-inbox sweep with `gh` only — claim labels, already-reviewed-at-HEAD skip, local-checkout sync, and auto-fix + push on your own PRs |
 | `devpilot:resolving-review-threads` | Respond to inline review comments after pushing fixes |
 | `devpilot:scanning-repos` | Full-repo audit (security, edge cases, coverage, doc drift) → GitHub issues |
 | `devpilot:issue-triage` | Triage and classify open GitHub issues |
