@@ -17,6 +17,17 @@
   path, and never force-pushes, rebases, or amends a pushed commit. It also
   stops after three `Devpilot-Auto-Fix` commits on one branch, so the
   review → fix → re-review cycle cannot ping-pong indefinitely.
+- `devpilot:pr-review` now states that posting is automatic and never gated on a
+  confirmation. A new `<posting_is_not_optional>` rule in the skill, a "Post
+  without asking" section in `references/posting.md`, and four rationalization-table
+  rows close the gap that let a finished review stop at "here's the draft — want me
+  to post it?". The skip list (explicit opt-out in the user's own words, no real PR,
+  closed/merged PR) is now marked exhaustive: severity, comment count, and whose PR
+  it is do not gate a post.
+- The batch sweep passes the same rule down to its subagents — the review agent is
+  told to post without asking, and the fix agent to reply on every thread it touched,
+  including skipped ones. Neither has a human watching it, so a held-back draft is a
+  review that never lands.
 - Self-authored PRs are the only ones eligible for the fix pass. The Step 2
   confirmation now states up front that `Self: yes` rows will be fixed and
   pushed, and the Step 4 summary gained `Self` and `Auto-fix` columns carrying

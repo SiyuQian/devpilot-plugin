@@ -162,6 +162,8 @@ First, claim this PR for review by applying a label (idempotent — do not fail 
 
 Then use devpilot:pr-review to review this PR: <url>. Local repo path: <absolute-path> (or 'not available' if remote-only). If a local path is provided, use it for reading surrounding code context. Follow the skill instructions completely.
 
+POST THE REVIEW WITHOUT ASKING. You are running inside a batch sweep — there is no human watching this agent, so a draft held back for approval is a review that never lands. Do not return findings as text for someone else to post. The only conditions that skip a post are the three in devpilot:pr-review's posting.md ('Skip posting and say so'); PR count, comment count, finding severity, and whose PR it is are not among them.
+
 SELF-AUTHORED: <yes|no> (copy from the `self` column of the discovery table). If yes, this is my own PR: do the full review exactly as normal, but cap the published review event at COMMENT — never post APPROVE. GitHub rejects self-approval with a 422 and the whole review post fails, so a clean self-authored PR would otherwise lose its entire review. This cap overrides devpilot:pr-review's normal event mapping. REQUEST_CHANGES is not capped and posts as usual.
 
 Report back ONLY the result: approved, commented (with issue count), or skipped (with reason)."
@@ -301,11 +303,13 @@ Agent({
 > rule as `devpilot:pr-guard`, and for the same reason.
 >
 > **5. Close the threads.** Use `devpilot:resolving-review-threads` and follow it exactly — reply
-> first, resolve second, one thread at a time:
+> first, resolve second, one thread at a time. Post every reply **without asking**; nobody is
+> watching this agent, and a thread left silent reads as "ignored", not "pending approval":
 >
 > - **Fixed** → reply naming the change and the new commit SHA, then resolve the thread.
 > - **Skipped** → reply stating concretely which of the four skip cases applies and why, and
->   **leave the thread open**. Never resolve a finding you did not fix.
+>   **leave the thread open**. Never resolve a finding you did not fix. A skipped finding still
+>   gets its reply — silence is the one outcome that is never correct here.
 >
 > **Return ONLY** one line: `fixed: N, skipped: M, pushed <sha>` — or `skipped (<reason>)` if you
 > never reached a commit. No diffs, no logs, no narration.
