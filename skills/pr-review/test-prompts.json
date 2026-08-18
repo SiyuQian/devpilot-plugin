@@ -34,5 +34,11 @@
     "scenario": "board setup only",
     "prompt": "configure PR review tracking for this repo on https://github.com/orgs/example/projects/9",
     "expected": "Resolves the verified wrapper, runs setup against the explicit existing Project, and saves the URL in repository-local git config. If authorization is missing, asks the user to run `gh auth refresh -s project`. Does not create a Project, run a PR eligibility gate, or start review fanout."
+  },
+  {
+    "id": 7,
+    "scenario": "PR merged after project claim",
+    "prompt": "review https://github.com/example/repo/pull/75; another maintainer may merge it while you review",
+    "expected": "After claiming the Project item as `Being reviewed`, the skill re-reads PR state immediately before POST. If it is now merged/closed, it skips the review POST and archives the Project item instead of marking it `Reviewed` or returning it to `Waiting`. If the POST races and fails, it rechecks state and applies the same terminal cleanup."
   }
 ]

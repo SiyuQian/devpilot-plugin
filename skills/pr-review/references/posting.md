@@ -115,6 +115,8 @@ Inline comments do NOT need these links — their anchor (`path`, `line`) is str
 
 Before the POST, these are hard gates — a failed check means the payload is malformed and MUST NOT be posted:
 
+- Re-read `gh pr view <url> --json state -q .state` immediately before POST. If the PR is now
+  `MERGED` or `CLOSED`, skip the POST and follow `project-board.md` to archive its review-board item.
 - **`comments[]` is non-empty whenever any finding survived filtering.** Zero inline comments is only legal when the review has zero findings (clean approve). Findings rendered as body sections with `path:line` references instead of `comments[]` entries is the single most common failure of this skill — if you catch yourself doing it, go back to step 4 and re-read `template.md`.
 - **The body is the rendered `template.md` skeleton**, verifiable mechanically: it contains the leading `<!-- devpilot:pr-review` marker, a `### Verdict` heading, an `### Inline findings` count section, and the disclaimer line with the `Code graph / AST facts: <used | partial | not available>` slot filled in. A body missing any of these was free-composed, not drafted from the template — redraft it.
 - Every inline comment's `(path, line)` exists in the diff at `head_sha` (`gh pr diff` output). Posting against a non-diff line returns 422.
@@ -148,7 +150,8 @@ Skip posting and tell the user explicitly that the review is local-only when any
 
 - The user opted out **in their own words, in this conversation** ("don't post", "dry run", "local only", "just draft"). Absence of an explicit "yes, post it" is not an opt-out — the default is to post.
 - The review is on a patch pasted into chat with no real PR behind it.
-- The PR is already merged or closed.
+- The PR is already merged or closed. If it was claimed on the configured review Project, archive
+  the Project item instead of returning it to the waiting queue.
 
 This list is exhaustive. If none of the three holds, post — do not invent a fourth reason and do not
 ask the user to supply one.

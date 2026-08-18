@@ -111,13 +111,15 @@ Agent({
 > **3. Sync local repos.** For each unique surviving repo, check these locations in order and use the first match: `../$repo_name`, `~/$repo_name`, `~/Works/github.com/*/$repo_name`. If found, run `git fetch origin` inside it and record the absolute path. If not found, record `remote-only`. (A local checkout lets `devpilot:pr-review` read surrounding code context instead of the diff alone.)
 >
 > **4. Sync the optional GitHub Project queue.** Read
-> `devpilot:pr-review`'s `references/project-board.md`, resolve its verified wrapper once, and set
-> every surviving PR to `Waiting to be picked up`. Run from the PR's `local_path` so its
+> `devpilot:pr-review`'s `references/project-board.md`, resolve its verified wrapper once, and run
+> `sweep-closed` once per distinct configured Project before queueing candidates. The sweep archives
+> merged/closed PR items left by interrupted reviews; it must never archive open PRs or ordinary
+> issues. Then set every surviving PR to `Waiting to be picked up`. Run from the PR's `local_path` so its
 > `git config devpilot.reviewProject` is visible; for `remote-only`, sync only when
 > `DEVPILOT_REVIEW_PROJECT` is set. A missing configuration means `not configured`, not an error.
-> A wrapper/scope/API failure is non-fatal: retain the PR, record the exact short error as its
-> board result, and continue. This step deliberately requeues a previously reviewed PR whose head
-> SHA moved.
+> A sweep/wrapper/scope/API failure is non-fatal: retain the PR, record the exact short error as its
+> board result, and continue. Do not run the sweep more than once for PRs sharing one Project. This
+> step deliberately requeues a previously reviewed PR whose head SHA moved.
 >
 > **Return ONLY this** — no logs, no JSON dumps, no narration:
 > - The resolved `first_name` (the reviewer's, for labeling).

@@ -12,8 +12,10 @@ usage() {
 Usage:
   pr-review-project.sh setup --project <url|owner/number> [--field <name>]
   pr-review-project.sh set --pr <pull-request-url> --status <status> [--project <url|owner/number>] [--field <name>]
+  pr-review-project.sh archive --pr <pull-request-url> [--project <url|owner/number>]
+  pr-review-project.sh sweep-closed [--project <url|owner/number>]
 
-Project resolution for `set`, in order:
+Project resolution for `set`, `archive`, and `sweep-closed`, in order:
   --project, DEVPILOT_REVIEW_PROJECT, git config devpilot.reviewProject
 
 Statuses:
@@ -123,15 +125,73 @@ setup_project() {
     '{project: $project, field: $field, ready: true}'
 }
 
+load_items() {
+  ITEMS_JSON=$(run_gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 1000 --format json)
+}
+
+find_item() {
+  load_items
+  ITEM_ID=$(jq -r --arg url "$PR_URL" 'first(.items[]? | select(.content.url == $url)) | .id // empty' <<<"$ITEMS_JSON")
+}
+
 find_or_add_item() {
-  local items_json item_json
-  items_json=$(run_gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --limit 1000 --format json)
-  ITEM_ID=$(jq -r --arg url "$PR_URL" 'first(.items[]? | select(.content.url == $url)) | .id // empty' <<<"$items_json")
+  local item_json
+  find_item
   if [[ -z "$ITEM_ID" ]]; then
     item_json=$(run_gh project item-add "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" --url "$PR_URL" --format json)
     ITEM_ID=$(jq -r '.id // empty' <<<"$item_json")
     [[ -n "$ITEM_ID" ]] || die "GitHub added $PR_URL to the project but returned no item ID"
   fi
+}
+
+archive_item_id() {
+  run_gh project item-archive "$PROJECT_NUMBER" \
+    --owner "$PROJECT_OWNER" \
+    --id "$1" \
+    --format json >/dev/null
+}
+
+archive_pr() {
+  load_project
+  find_item
+
+  if [[ -z "$ITEM_ID" ]]; then
+    jq -n \
+      --arg project "$PROJECT_URL" \
+      --arg pr "$PR_URL" \
+      '{project: $project, pr: $pr, archived: false, reason: "not-found"}'
+    return
+  fi
+
+  archive_item_id "$ITEM_ID"
+  jq -n \
+    --arg project "$PROJECT_URL" \
+    --arg pr "$PR_URL" \
+    --arg itemId "$ITEM_ID" \
+    '{project: $project, pr: $pr, archived: true, itemId: $itemId}'
+}
+
+sweep_closed_prs() {
+  local archived_count=0 item_id stale_item_ids
+  load_project
+  load_items
+  stale_item_ids=$(jq -r '
+    .items[]?
+    | select(.content.type == "PullRequest")
+    | select((.content.state // "" | ascii_upcase) == "MERGED" or (.content.state // "" | ascii_upcase) == "CLOSED")
+    | .id
+  ' <<<"$ITEMS_JSON")
+
+  while IFS= read -r item_id; do
+    [[ -n "$item_id" ]] || continue
+    archive_item_id "$item_id"
+    archived_count=$((archived_count + 1))
+  done <<<"$stale_item_ids"
+
+  jq -n \
+    --arg project "$PROJECT_URL" \
+    --argjson archived "$archived_count" \
+    '{project: $project, archived: $archived}'
 }
 
 status_option_id() {
@@ -200,6 +260,16 @@ case "$COMMAND" in
     [[ -n "$STATUS" ]] || die "set requires --status"
     resolve_project_ref "$PROJECT_ARG"
     set_status
+    ;;
+  archive)
+    [[ "$PR_URL" =~ ^https?://[^/]+/[^/]+/[^/]+/pull/[0-9]+/?$ ]] || die "archive requires a GitHub pull-request URL via --pr"
+    resolve_project_ref "$PROJECT_ARG"
+    archive_pr
+    ;;
+  sweep-closed)
+    [[ -z "$PR_URL" ]] || die "sweep-closed does not accept --pr"
+    resolve_project_ref "$PROJECT_ARG"
+    sweep_closed_prs
     ;;
   *) usage; die "unknown command '$COMMAND'" ;;
 esac

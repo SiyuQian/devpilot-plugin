@@ -1,7 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 — 2026-08-18
 
+- Fixed the review-board race when a claimed PR is merged or closed during the
+  review. `pr-review` now rechecks state immediately before posting, archives
+  terminal Project items instead of leaving them in `Being reviewed` or
+  returning them to `Waiting`, and distinguishes a merge-raced POST failure
+  from an ordinary review failure. Batch queue ingestion also sweeps stale
+  merged/closed PR items once per configured Project.
 - `devpilot:pr-review` can now coordinate an opt-in GitHub Projects v2 review
   board. Eligible PRs move through a dedicated `Review status` field from
   `Waiting to be picked up` to `Being reviewed`, then to `Reviewed` only after

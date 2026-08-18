@@ -1,6 +1,6 @@
 {
   "name": "devpilot",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "DevPilot workflow catalog for Claude Code: PR review/creation, repo scanning, issue triage & resolution, PRD decomposition, code style, content creation, and daily productivity skills.",
   "author": {
     "name": "Siyu Qian",

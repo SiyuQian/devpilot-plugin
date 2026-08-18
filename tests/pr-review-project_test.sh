@@ -32,7 +32,9 @@ case "$1 $2" in
     printf '{"id":"PVTSSF_status"}\n'
     ;;
   "project item-list")
-    if [[ "${ITEM_EXISTS:-0}" == 1 ]]; then
+    if [[ "${STALE_ITEMS:-0}" == 1 ]]; then
+      printf '{"items":[{"id":"PVTI_open","content":{"type":"PullRequest","url":"https://github.com/acme/widgets/pull/41","state":"OPEN"}},{"id":"PVTI_merged","content":{"type":"PullRequest","url":"https://github.com/acme/widgets/pull/42","state":"MERGED"}},{"id":"PVTI_closed","content":{"type":"PullRequest","url":"https://github.com/acme/widgets/pull/43","state":"CLOSED"}},{"id":"PVTI_issue","content":{"type":"Issue","url":"https://github.com/acme/widgets/issues/44","state":"CLOSED"}}]}\n'
+    elif [[ "${ITEM_EXISTS:-0}" == 1 ]]; then
       printf '{"items":[{"id":"PVTI_existing","content":{"url":"https://github.com/acme/widgets/pull/42"}}]}\n'
     else
       printf '{"items":[]}\n'
@@ -42,6 +44,9 @@ case "$1 $2" in
     printf '{"id":"PVTI_new"}\n'
     ;;
   "project item-edit")
+    printf '{}\n'
+    ;;
+  "project item-archive")
     printf '{}\n'
     ;;
   *)
@@ -72,7 +77,7 @@ assert_no_call() {
   fi
 }
 
-"$SCRIPT" --help | grep -F "pr-review-project.sh set" >/dev/null \
+"$SCRIPT" --help | grep -F "pr-review-project.sh archive" >/dev/null \
   || fail "top-level help should succeed"
 
 : >"$GH_CALLS"
@@ -94,6 +99,27 @@ assert_call "project item-edit --id PVTI_existing --field-id PVTSSF_status --pro
   --status "Reviewed" >/dev/null
 assert_call "project item-add 7 --owner acme --url https://github.com/acme/widgets/pull/42 --format json"
 assert_call "project item-edit --id PVTI_new --field-id PVTSSF_status --project-id PVT_project --single-select-option-id opt_reviewed --format json"
+
+: >"$GH_CALLS"
+ITEM_EXISTS=1 "$SCRIPT" archive \
+  --project acme/7 \
+  --pr https://github.com/acme/widgets/pull/42 >/dev/null
+assert_call "project item-archive 7 --owner acme --id PVTI_existing --format json"
+
+: >"$GH_CALLS"
+archive_result=$("$SCRIPT" archive \
+  --project acme/7 \
+  --pr https://github.com/acme/widgets/pull/42)
+assert_no_call "project item-archive"
+jq -e '.archived == false and .reason == "not-found"' <<<"$archive_result" >/dev/null \
+  || fail "archiving an absent PR should be an idempotent no-op"
+
+: >"$GH_CALLS"
+STALE_ITEMS=1 "$SCRIPT" sweep-closed --project acme/7 >/dev/null
+assert_call "project item-archive 7 --owner acme --id PVTI_merged --format json"
+assert_call "project item-archive 7 --owner acme --id PVTI_closed --format json"
+assert_no_call "project item-archive 7 --owner acme --id PVTI_open"
+assert_no_call "project item-archive 7 --owner acme --id PVTI_issue"
 
 : >"$GH_CALLS"
 if MISSING_SCOPE=1 "$SCRIPT" setup --project acme/7 >"$TEST_DIR/scope-out" 2>"$TEST_DIR/scope-error"; then
