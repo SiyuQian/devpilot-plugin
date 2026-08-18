@@ -96,13 +96,50 @@ Subcommands:
 |---|---|
 | `smoke` | `validate` + `hook` + `codegraph`. The default. No API cost. |
 | `validate` | `scripts/validate.py` through the sandbox venv. |
-| `hook` | `tests/refresh-default-branch_test.sh` — 17 git-fixture scenarios for the `SessionStart` hook. |
+| `hook` | `tests/refresh-default-branch_test.sh` (17 scenarios) + `tests/pr-on-finish_test.sh` (8 scenarios) — the `SessionStart` and `Stop` hooks. |
 | `codegraph` | 18 assertions on `scripts/codegraph.sh` in a sandbox. |
 | `fixture` | Build the Go fixture repo, print its path + base/head SHAs. |
 | `headless present\|missing\|declined ["extra prompt"]` | Real `claude -p` session executing pr-review step 1.5 with codegraph in that state. |
+| `select finished\|explicit\|bare\|scoped` | Real `claude -p` session: does `pr-creator` self-trigger when a task finishes? See below. |
 | `install-live` | Really downloads the CodeGraph bundle (~57 MB, ~280 MB unpacked) **into the sandbox**. |
-| `smoke-full` | `smoke` + all three headless probes. Costs tokens. |
+| `smoke-full` | `smoke` + all five headless probes + all four `select` arms. Costs tokens. |
 | `clean` | `rm -rf /tmp/devpilot-plugin-driver`. |
+
+### Does a skill self-trigger? (`select`)
+
+`headless` proves a skill *behaves* once invoked. `select` proves it gets
+*invoked at all* — a different question with a different answer.
+
+```bash
+bash .claude/skills/run-devpilot-plugin/driver.sh select finished
+```
+
+It builds a tiny python repo with a real (bare, on-disk) origin, drops
+`skills/pr-creator/` in as a project skill, loads `scripts/pr-on-finish.sh` as a
+`Stop` hook, and asks for work that never mentions a PR. The assertion is on a
+`PreToolUse` tool log: did `Skill{pr-creator}` or `gh pr create` actually run?
+
+| Arm | Prompt | Must |
+|---|---|---|
+| `explicit` | asks for a PR outright | fire — positive control; if this fails the probe is blind |
+| `finished` | "add `sub`, commit it" | fire — the real question |
+| `bare` | read-only question | stay silent |
+| `scoped` | "that is the whole task, do nothing beyond that" | stay silent — the human outranks the hook |
+
+**Two traps, both of which produce a confident wrong answer:**
+
+1. **Do not add CLI flags to that `claude -p` call.** Verified on this build:
+   `--output-format`, `--allowedTools`, and `--permission-mode` *each* silently
+   suppress the hooks passed via `--settings`. The probe then runs with no hook,
+   fails, and looks like a broken skill. Permissions and hooks both have to ride
+   inside the `--settings` file. If you change the invocation, re-run `explicit`
+   first — it is the canary.
+2. **Do not assert by grepping the stream for the skill name.** The session's
+   init event lists every available skill, so a bare `grep -c pr-creator` matches
+   on every run and passes even when nothing fired.
+
+Cheap counterpart with no API cost: `tests/pr-on-finish_test.sh` covers the hook's
+gating logic (when it speaks and, mostly, when it stays quiet).
 
 ### Verifying a skill edit for real
 
