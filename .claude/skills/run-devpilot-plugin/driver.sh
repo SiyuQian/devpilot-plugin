@@ -26,6 +26,7 @@
 #   driver.sh codegraph                 # 18 assertions on the wrapper
 #   driver.sh install-live              # REAL ~57MB bundle download into the sandbox
 #   driver.sh headless present|missing|declined ["extra prompt"]
+#   driver.sh select finished|explicit|bare|scoped   # does pr-creator self-trigger?
 #   driver.sh smoke-full                # smoke + all three headless probes
 #   driver.sh clean                     # remove the sandbox
 #
@@ -550,6 +551,136 @@ cmd_hook() {
     bad "refresh-default-branch hook tests failed"
     printf '%s\n' "$out"
   fi
+
+  head2 "tests/pr-on-finish_test.sh"
+  if out=$(cd "$ROOT" && bash tests/pr-on-finish_test.sh 2>&1); then
+    ok "pr-on-finish Stop hook: ${out##*$'\n'}"
+  else
+    bad "pr-on-finish Stop hook tests failed"
+    printf '%s\n' "$out"
+  fi
+}
+
+# --- skill selection probe ----------------------------------------------------
+# Does pr-creator get invoked on its own when a task is finished, with nothing in
+# the prompt asking for a PR? That is a HARNESS question, not a skill-prose one:
+# a skill `description` is consulted when matching the user's request, and
+# nothing re-reads it at the moment the model decides to stop. The Stop hook
+# (scripts/pr-on-finish.sh) is what actually triggers it, so this probe is
+# meaningless unless that hook is loaded — see the flag warning below.
+#
+# Four arms, and all four matter:
+#   explicit  positive control — asked outright. If this fails the probe is blind
+#             and a `finished` failure means nothing.
+#   finished  the real question.
+#   bare      negative control — a read-only task must NOT trigger it.
+#   scoped    ceiling control — when the human explicitly closes scope, the hook
+#             must LOSE. Asserts the trigger is not an override.
+cmd_select() {
+  local mode=${1:-finished}
+  local claude_bin
+  claude_bin=$(find_claude) || { bad "claude CLI not found"; return 1; }
+
+  head2 "select: does pr-creator self-trigger? mode=$mode"
+
+  local ws="$SANDBOX/select"
+  local toollog="$SANDBOX/select-tools.jsonl"
+  local settings="$SANDBOX/select-settings.json"
+  rm -rf "$ws" "$SANDBOX/select-origin.git" "$toollog"
+  mkdir -p "$ws/.claude/skills"
+  cp -R "$ROOT/skills/pr-creator" "$ws/.claude/skills/pr-creator"
+
+  # A real remote so pr-creator's preflight is not derailed by "no origin". Bare
+  # repo on disk => a push is harmless and `gh pr create` simply fails; the
+  # assertion is on INVOCATION, not on a created PR.
+  git init -q --bare "$SANDBOX/select-origin.git"
+  git -C "$ws" init -q -b main .
+  git -C "$ws" remote add origin "$SANDBOX/select-origin.git"
+  printf 'def add(a, b):\n    return a + b\n' >"$ws/calc.py"
+  git -C "$ws" add -A
+  git -C "$ws" -c user.email=t@t -c user.name=t commit -qm "chore: seed"
+  git -C "$ws" push -q origin main
+  git -C "$ws" remote set-head origin -a >/dev/null 2>&1
+
+  # Two hooks: the Stop hook under test, plus a PreToolUse logger that is how we
+  # see which tools ran. A plain .claude/settings.json in a scratch dir is NOT
+  # loaded (untrusted project), so both must come in via --settings.
+  python3 - "$settings" "$ROOT/scripts/pr-on-finish.sh" "$toollog" <<'PY'
+import json,sys
+out,hook,log=sys.argv[1],sys.argv[2],sys.argv[3]
+json.dump({
+  # Permissions must ride in the settings file too: passing --allowedTools or
+  # --permission-mode on the CLI would suppress the hooks above. Without this the
+  # model cannot commit, so the Stop hook correctly stays silent and the probe
+  # measures nothing.
+  "permissions":{"defaultMode":"bypassPermissions"},
+  "hooks":{
+    "Stop":[{"hooks":[{"type":"command","command":'bash "%s"'%hook}]}],
+    "PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":'cat >> "%s"'%log}]}],
+  }}, open(out,"w"), indent=2)
+PY
+
+  local prompt
+  case $mode in
+    finished) prompt="In calc.py, add a \`sub(a, b)\` function next to \`add\`, \
+then commit it on a new branch with a conventional-commit message." ;;
+    # Adversarial: the user explicitly closes scope. A more recent, more specific
+    # instruction from the human outranks a standing hook, so REFUSING is correct
+    # here — this arm pins that ceiling so nobody "fixes" it into an override.
+    scoped)   prompt="In calc.py, add a \`sub(a, b)\` function next to \`add\`, \
+then commit it on a new branch with a conventional-commit message. That is the \
+whole task — do not do anything beyond that." ;;
+    bare)     prompt="Read calc.py and tell me in one sentence what \`add\` does. \
+Change nothing." ;;
+    explicit) prompt="In calc.py, add a \`sub(a, b)\` function next to \`add\`, \
+then open a pull request for it." ;;
+    *) bad "unknown mode '$mode' (finished|bare|explicit|scoped)"; return 1 ;;
+  esac
+
+  # NO other flags. Verified on this CLI build: --output-format, --allowedTools,
+  # and --permission-mode EACH silently suppress --settings hooks, which turns
+  # this into a no-hook run that always "fails". If you add a flag here, first
+  # confirm `explicit` still passes.
+  ( cd "$ws" && "$claude_bin" -p "$prompt" --settings "$settings" ) >"$SANDBOX/select-out.txt" 2>&1
+
+  [ -s "$toollog" ] || { bad "no tools logged — PreToolUse hook did not load"; return 1; }
+
+  local fired
+  fired=$(python3 - "$toollog" <<'PY'
+import json,sys
+n=0
+for raw in open(sys.argv[1]).read().replace("}{","}\n{").splitlines():
+    try: e=json.loads(raw)
+    except Exception: continue
+    name=e.get("tool_name"); inp=json.dumps(e.get("tool_input") or {})
+    if name=="Skill" and "pr-creator" in inp: n+=1
+    elif name=="Bash" and ("gh pr create" in inp or "glab mr create" in inp): n+=1
+print(n)
+PY
+)
+
+  case $mode in
+    finished)
+      if [ "${fired:-0}" -gt 0 ]; then ok "pr-creator self-triggered on a finished task"
+      else bad "pr-creator never fired — the finish trigger does not work"; fi ;;
+    explicit)
+      if [ "${fired:-0}" -gt 0 ]; then ok "control: pr-creator fires when asked outright"
+      else bad "control failed — the probe cannot see invocation at all"; fi ;;
+    bare)
+      if [ "${fired:-0}" -eq 0 ]; then ok "pr-creator stayed out of a read-only task"
+      else bad "pr-creator fired on a read-only task — trigger is too broad"; fi ;;
+    scoped)
+      if [ "${fired:-0}" -eq 0 ]; then ok "explicit user scope-close still beats the hook"
+      else bad "hook overrode an explicit user instruction — too aggressive"; fi ;;
+  esac
+
+  python3 - "$toollog" <<'PY' | head -25
+import json,sys
+for raw in open(sys.argv[1]).read().replace("}{","}\n{").splitlines():
+    try: e=json.loads(raw)
+    except Exception: continue
+    print("      tool:", e.get("tool_name"), json.dumps(e.get("tool_input") or {})[:90])
+PY
 }
 
 cmd_clean() { rm -rf "$SANDBOX"; say "removed $SANDBOX"; }
@@ -571,12 +702,14 @@ case ${1:-smoke} in
   hook)         cmd_hook; report ;;
   install-live) cmd_install_live; report ;;
   headless)     shift; cmd_headless "$@"; report ;;
+  select)       shift; cmd_select "$@"; report ;;
   smoke)        cmd_validate; cmd_hook; cmd_codegraph; report ;;
   smoke-full)
     cmd_validate; cmd_hook; cmd_codegraph
     cmd_headless present; cmd_headless missing; cmd_headless declined
     cmd_headless fallback; cmd_headless unset-root
+    cmd_select explicit; cmd_select finished; cmd_select bare; cmd_select scoped
     report ;;
   clean)        cmd_clean ;;
-  *) say "usage: driver.sh {smoke|smoke-full|validate|hook|fixture|codegraph|install-live|headless <present|missing|declined|fallback|unset-root>|clean}"; exit 2 ;;
+  *) say "usage: driver.sh {smoke|smoke-full|validate|hook|fixture|codegraph|install-live|headless <present|missing|declined|fallback|unset-root>|select <finished|explicit|bare|scoped>|clean}"; exit 2 ;;
 esac
