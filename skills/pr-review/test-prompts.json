@@ -15,6 +15,24 @@
     "id": 3,
     "scenario": "local diff, no PR URL, no posting",
     "prompt": "review my local branch diff against main before I push — don't post anything, just show me findings",
-    "expected": "Loads via git diff main...HEAD (not gh). Runs fanout. Skips graph preflight gracefully if no head-SHA on remote. Renders body + inline comments locally with `path:line` prefixes (per posting.md → 'Skip posting'). Does NOT call gh api."
+    "expected": "Loads via git diff main...HEAD (not gh). Runs fanout. Skips graph preflight gracefully if no head-SHA on remote. Renders body + inline comments locally with `path:line` prefixes (per posting.md → 'Skip posting'). Does NOT call gh api or pr-review-project.sh."
+  },
+  {
+    "id": 4,
+    "scenario": "configured GitHub Project lifecycle",
+    "prompt": "review https://github.com/example/repo/pull/73; this repo has devpilot.reviewProject configured",
+    "expected": "Eligibility gate runs first. If it proceeds, the verified pr-review-project.sh wrapper moves the PR to `Being reviewed` before fanout. The skill posts one combined review, then and only then moves the item to `Reviewed`."
+  },
+  {
+    "id": 5,
+    "scenario": "project sync unavailable",
+    "prompt": "review https://github.com/example/repo/pull/74; track it on our configured GitHub Project",
+    "expected": "If the wrapper reports missing `project` scope or another board error, the skill reports the exact short failure and continues the full review and POST. It does not claim the board was updated and does not weaken or skip the code review."
+  },
+  {
+    "id": 6,
+    "scenario": "board setup only",
+    "prompt": "configure PR review tracking for this repo on https://github.com/orgs/example/projects/9",
+    "expected": "Resolves the verified wrapper, runs setup against the explicit existing Project, and saves the URL in repository-local git config. If authorization is missing, asks the user to run `gh auth refresh -s project`. Does not create a Project, run a PR eligibility gate, or start review fanout."
   }
 ]

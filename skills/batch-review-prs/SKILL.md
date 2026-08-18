@@ -11,8 +11,9 @@ not stop at the review: it applies the findings it just posted, pushes the fix, 
 threads it fixed (Step 3.5). A review you wrote against your own work is a to-do list you already
 have the answers to; leaving it unactioned is the waste this skill exists to remove.
 
-Needs only `gh`. Adds claim labels, already-reviewed-at-HEAD filtering, local-checkout
-syncing, and the self-authored auto-fix pass. This is the single review-queue skill — the older
+Needs only `gh`. Adds claim labels, opt-in GitHub Project queue sync, already-reviewed-at-HEAD
+filtering, local-checkout syncing, and the self-authored auto-fix pass. This is the single
+review-queue skill — the older
 `pr-review-queue` (which discovered the queue via `devpilot github prs review-queue`) was removed
 as a duplicate.
 
@@ -109,9 +110,18 @@ Agent({
 >
 > **3. Sync local repos.** For each unique surviving repo, check these locations in order and use the first match: `../$repo_name`, `~/$repo_name`, `~/Works/github.com/*/$repo_name`. If found, run `git fetch origin` inside it and record the absolute path. If not found, record `remote-only`. (A local checkout lets `devpilot:pr-review` read surrounding code context instead of the diff alone.)
 >
+> **4. Sync the optional GitHub Project queue.** Read
+> `devpilot:pr-review`'s `references/project-board.md`, resolve its verified wrapper once, and set
+> every surviving PR to `Waiting to be picked up`. Run from the PR's `local_path` so its
+> `git config devpilot.reviewProject` is visible; for `remote-only`, sync only when
+> `DEVPILOT_REVIEW_PROJECT` is set. A missing configuration means `not configured`, not an error.
+> A wrapper/scope/API failure is non-fatal: retain the PR, record the exact short error as its
+> board result, and continue. This step deliberately requeues a previously reviewed PR whose head
+> SHA moved.
+>
 > **Return ONLY this** — no logs, no JSON dumps, no narration:
 > - The resolved `first_name` (the reviewer's, for labeling).
-> - A markdown table with columns: `#`, `repo` (owner/repo), `pr` (number), `author` (append `(self)` for self-authored), `self` (`yes` / `no`), `title`, `url`, `local_path` (absolute path or `remote-only`).
+> - A markdown table with columns: `#`, `repo` (owner/repo), `pr` (number), `author` (append `(self)` for self-authored), `self` (`yes` / `no`), `title`, `url`, `local_path` (absolute path or `remote-only`), and `board` (`Waiting`, `not configured`, or the short sync error).
 >   The explicit `self` column is not redundant with the `(self)` suffix — Step 3 reads it to decide
 >   the review event cap, and Step 3.5 reads it to decide whether the PR gets an auto-fix pass.
 >   `local_path` is likewise load-bearing twice: it gives the reviewer code context, and it is the
@@ -127,10 +137,10 @@ Present the table the subagent returned, with clickable links:
 ```
 Found N PRs needing your review:
 
-| # | Repo | PR | Author | Self | Title | Link |
-|---|------|----|--------|------|-------|------|
-| 1 | owner/repo | #123 | user | no | Title here | https://github.com/owner/repo/pull/123 |
-| 2 | owner/repo | #124 | you (self) | yes | My own PR | https://github.com/owner/repo/pull/124 |
+| # | Repo | PR | Author | Self | Title | Link | Board |
+|---|------|----|--------|------|-------|------|-------|
+| 1 | owner/repo | #123 | user | no | Title here | https://github.com/owner/repo/pull/123 | Waiting |
+| 2 | owner/repo | #124 | you (self) | yes | My own PR | https://github.com/owner/repo/pull/124 | not configured |
 ```
 
 Carry the `Self` column through from the discovery table — Steps 3 and 3.5 both need it, and

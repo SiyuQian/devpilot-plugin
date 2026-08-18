@@ -1,5 +1,5 @@
 ---
-description: Review a pull request, merge request, or diff with the eligibility-gated parallel-fanout review pipeline
+description: Review a pull request, merge request, or diff and update its configured GitHub Project review status
 ---
 
 Invoke the `devpilot:pr-review` skill with these arguments: $ARGUMENTS

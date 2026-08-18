@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- `devpilot:pr-review` can now coordinate an opt-in GitHub Projects v2 review
+  board. Eligible PRs move through a dedicated `Review status` field from
+  `Waiting to be picked up` to `Being reviewed`, then to `Reviewed` only after
+  GitHub accepts the combined review POST. Board failures are reported but never
+  block the code review, and failed reviews are returned to the waiting queue.
+- `devpilot:batch-review-prs` now populates that waiting queue after its existing
+  eligibility filters, including requeueing a reviewed PR when its head SHA
+  moves. The existing `reviewing:<name>` labels remain as durable reviewer
+  identity/coverage claims; the Project field represents lifecycle state.
+- Added an idempotent `scripts/pr-review-project.sh` adapter and offline mocked
+  tests for field setup, existing/new item transitions, and missing Project
+  authorization. Setup uses an existing Project, stores the opt-in URL in local
+  git config, and never guesses or creates a board.
 - `devpilot:batch-review-prs` no longer stops at reviewing your own PRs. A new
   Step 3.5 runs after each self-authored review: it reads back the inline
   findings it just posted, applies every one that is mechanically fixable (all

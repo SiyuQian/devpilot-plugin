@@ -5,27 +5,38 @@ description: >-
   "review this PR", "review PR #123", "look over these changes", "check my diff
   before I merge", "/review", or when they share a PR URL and ask for thoughts.
   Findings are posted as inline comments anchored to specific lines so the
-  author can act on each one in place. Do NOT use for pure style/lint review,
+  author can act on each one in place. When a GitHub review Project is
+  configured, the skill also moves the PR through Waiting, Being reviewed,
+  and Reviewed. Also use when the user asks to enable or configure that review
+  board integration. Do NOT use for pure style/lint review,
   formatting-only changes, or language-specific idiom review (defer to style
   skills like devpilot:google-go-style).
 ---
 
-# PR Review (Eligibility-Gated, Parallel-Fanout, Inline-First)
+# PR Review (Eligibility-Gated, Project-Coordinated, Parallel-Fanout, Inline-First)
 
 ## Overview
 
 A PR review the author can act on: every concrete finding is posted as an **inline comment anchored to the line it talks about**, drawn from a **parallel multi-angle scan** and filtered through an explicit **confidence rubric** so the author sees signal, not noise. The body holds a short verdict, strengths, the blind-spot sweep, and counts.
 
-Three structural ideas drive this skill:
+Four structural ideas drive this skill:
 
 1. **Eligibility gate** — decide the PR is worth a full review before spending tokens on it. Dependabot, drafts, generated-file PRs, "already reviewed" all stop here.
 2. **Parallel fanout** — five core subagents (A–E) plus an optional sixth (F) look at the change from independent angles in parallel. Coverage comes from diversity of angle, not depth of a single pass. The main session dispatches and merges; subagents read code. Agent F (Dependency Reality Check) is dispatched only when the dispatcher's pre-extracted dependency manifest is non-empty — it verifies imports/packages resolve on their public registry, catching hallucinated names that pass every text-based agent.
 3. **Confidence filtering** — every finding carries `Confidence: 0–100`. Findings below the threshold defined in `references/confidence.md` are dropped by default. Coverage at collection, filtering at posting.
+4. **Project coordination** — when an opt-in GitHub Project is configured, eligible PRs move from `Waiting to be picked up` to `Being reviewed`, then to `Reviewed` only after the review POST succeeds. Board errors never suppress the review.
+
+## Board setup only
+
+When the user asks only to enable/configure the review board and gives no PR to review, follow
+`references/project-board.md` → "Configuration and one-time setup", verify the field, save the
+repository-local project URL, and stop. Do not run the eligibility gate or review fanout for a
+setup-only request.
 
 ## When NOT to Use
 
 - Pure formatting / lint / rename PRs — defer to the relevant style skill.
-- No PR, diff, or branch given — ask the user for one.
+- No PR, diff, or branch given — ask the user for one, unless this is the board setup-only mode.
 - Everything else that shouldn't get a full review (closed, draft, automation-only, generated-only, already reviewed) is handled by the eligibility gate in step 0 — enter the skill and let the gate decide.
 
 ## Four rules that govern every finding
@@ -55,11 +66,13 @@ Every finding tied to a specific line goes in as an inline review comment, never
 ```
 0. Eligibility gate         → references/eligibility.md
 1. Load PR                  → gh / git / pasted patch
+1.25 Claim project item     → references/project-board.md (configured GitHub Projects only)
 1.5 Graph enrichment        → references/graph.md (codegraph.sh ensure → preflight; offer install if absent)
 2. Parallel fanout          → references/fanout.md (5 core agents in parallel, +F if deps added)
 3. Filter + merge + reconcile against graph → references/confidence.md
 4. Draft review             → references/template.md
 5. Post one combined POST   → references/posting.md
+5.5 Complete project item  → references/project-board.md (only after successful POST)
 Self-check before post      → references/rationalizations.md
 ```
 
@@ -89,6 +102,14 @@ gh pr diff <url>
 ```
 
 Or `git diff <base>...HEAD` for a local branch, or read a pasted patch directly. Capture the **head SHA** — link rendering depends on it (see `references/posting.md`). A PR with no stated intent is itself a finding.
+
+### 1.25. Claim the GitHub Project item
+
+For a real GitHub PR whose eligibility decision is `proceed`, follow
+`references/project-board.md`. If an opt-in review project is configured, move the PR to
+`Being reviewed` before fanout. This is best-effort coordination: report an exact transition
+failure, but do not stop or weaken the review. Skip this step for local diffs, pasted patches,
+GitLab, or when no project is configured.
 
 ### 1.5. Graph enrichment
 
@@ -171,6 +192,13 @@ Two invariants gate the POST — violating either means the draft step failed an
 
 See `references/posting.md` for the full `jq` build, anchor field rules (multi-line / LEFT side / `start_line`), GitLab equivalent, and the local-only "skip posting" mode. Before posting, walk `references/rationalizations.md` self-check.
 
+### 5.5. Complete the GitHub Project item
+
+Only after GitHub accepts the combined review POST, move a successfully tracked PR to `Reviewed`
+per `references/project-board.md`. If the review aborts after it was moved to `Being reviewed`,
+make one best-effort transition back to `Waiting to be picked up`. Never let a board error hide or
+change the review result.
+
 ## Cross-References
 
 - Code quality at the naming / function / class level → `devpilot:clean-code-principles`.
@@ -190,5 +218,6 @@ See `references/posting.md` for the full `jq` build, anchor field rules (multi-l
 | `references/checklist.md` | Quality dimensions referenced by Agent B's bug scan and Agent A's checklist tail. |
 | `references/template.md` | Inline comment template + review body template (Verdict, Strengths, sweep, counts) + tone/stance/language rules. |
 | `references/posting.md` | One combined POST (`gh api`), full-SHA link format, GitLab equivalent. |
+| `references/project-board.md` | Opt-in GitHub Projects v2 setup, queue/claim/complete state machine, and failure semantics. |
 | `references/example-review.md` | Worked example: body + inline comments. |
 | `references/rationalizations.md` | Common shortcuts + pre-post self-check. |

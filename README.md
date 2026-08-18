@@ -38,11 +38,11 @@ claude plugin install devpilot@devpilot-marketplace
 
 | Skill | What it does |
 |---|---|
-| `devpilot:pr-review` | Review a PR/diff, post inline comments |
+| `devpilot:pr-review` | Review a PR/diff, post inline comments, and track opt-in GitHub Project review status |
 | `devpilot:pr-creator` | Create or update pull requests |
 | `devpilot:pr-guard` | Watch a PR until it's mergeable and CI is green (resolves conflicts, fixes failing checks) |
 | `devpilot:pr-announce` | Announce a PR in the team's Slack review channel (draft first, send only on confirmation) |
-| `devpilot:batch-review-prs` | Review-inbox sweep with `gh` only — claim labels, already-reviewed-at-HEAD skip, local-checkout sync, and auto-fix + push on your own PRs |
+| `devpilot:batch-review-prs` | Review-inbox sweep — sync an opt-in Project queue, claim labels, skip already-reviewed HEADs, and auto-fix your own PRs |
 | `devpilot:resolving-review-threads` | Respond to inline review comments after pushing fixes |
 | `devpilot:scanning-repos` | Full-repo audit (security, edge cases, coverage, doc drift) → GitHub issues |
 | `devpilot:issue-triage` | Triage and classify open GitHub issues |
