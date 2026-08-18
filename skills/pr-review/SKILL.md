@@ -174,6 +174,12 @@ One inline comment per anchored finding: severity-tagged title + Behavior today 
 
 ### 5. Post
 
+Immediately before the POST, re-read the PR state. If it is now `MERGED` or `CLOSED`, skip posting
+per `references/posting.md` and make one best-effort `archive` call for the configured Project item.
+This is a second state check, not a replacement for the eligibility gate: the PR may be merged while
+the fanout is running. If the POST itself fails, re-read state again; archive a merged/closed PR and
+return an open PR to `Waiting to be picked up` only when `board_claimed=true`.
+
 Single combined POST to `repos/:owner/:repo/pulls/:num/reviews` carrying `{event, body, comments[]}` in one call — never split into multiple reviews and never post inline findings via `gh pr comment`. Event derived from highest severity (`confidence.md` → "Severity rubric"). **This step runs unprompted** — see `references/posting.md` → "Post without asking". Links in the body use full-SHA `blob` URLs so GitHub renders the snippet preview.
 
 Payload shape:
@@ -196,8 +202,8 @@ See `references/posting.md` for the full `jq` build, anchor field rules (multi-l
 
 Only after GitHub accepts the combined review POST, move a successfully tracked PR to `Reviewed`
 per `references/project-board.md`. If the review aborts after it was moved to `Being reviewed`,
-make one best-effort transition back to `Waiting to be picked up`. Never let a board error hide or
-change the review result.
+re-read PR state: archive it when merged/closed, otherwise make one best-effort transition back to
+`Waiting to be picked up`. Never let a board error hide or change the review result.
 
 ## Cross-References
 
