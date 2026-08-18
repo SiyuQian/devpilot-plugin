@@ -21,7 +21,7 @@
 # Usage:
 #   driver.sh smoke                     # validate + hook + codegraph  (no API cost)
 #   driver.sh validate                  # scripts/validate.py
-#   driver.sh hook                      # tests/refresh-default-branch_test.sh
+#   driver.sh hook                      # deterministic shell-script tests
 #   driver.sh fixture                   # build the Go fixture repo, print refs
 #   driver.sh codegraph                 # 18 assertions on the wrapper
 #   driver.sh install-live              # REAL ~57MB bundle download into the sandbox
@@ -557,6 +557,14 @@ cmd_hook() {
     ok "pr-on-finish Stop hook: ${out##*$'\n'}"
   else
     bad "pr-on-finish Stop hook tests failed"
+    printf '%s\n' "$out"
+  fi
+
+  head2 "tests/pr-review-project_test.sh"
+  if out=$(cd "$ROOT" && bash tests/pr-review-project_test.sh 2>&1); then
+    ok "pr-review Project wrapper: ${out##*$'\n'}"
+  else
+    bad "pr-review Project wrapper tests failed"
     printf '%s\n' "$out"
   fi
 }
