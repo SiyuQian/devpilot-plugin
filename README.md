@@ -43,6 +43,7 @@ claude plugin install devpilot@devpilot-marketplace
 | `devpilot:pr-guard` | Watch a PR until it's mergeable and CI is green (resolves conflicts, fixes failing checks) |
 | `devpilot:pr-announce` | Announce a PR in the team's Slack review channel (draft first, send only on confirmation) |
 | `devpilot:batch-review-prs` | Review-inbox sweep — sync an opt-in Project queue, claim labels, skip already-reviewed HEADs, and auto-fix your own PRs |
+| `devpilot:babysit-prs` | Loop-friendly sweep of all your own open PRs — fix new review comments, merge conflicts, and failing CI until merge-ready |
 | `devpilot:resolving-review-threads` | Respond to inline review comments after pushing fixes |
 | `devpilot:scanning-repos` | Full-repo audit (security, edge cases, coverage, doc drift) → GitHub issues |
 | `devpilot:issue-triage` | Triage and classify open GitHub issues |
@@ -82,6 +83,7 @@ Thin slash-command entry points for the high-traffic skills (each just invokes t
 | `/dead-code` | `devpilot:dead-code-cleanup` |
 | `/grill` | `devpilot:grilling` |
 | `/batch-review-prs` | `devpilot:batch-review-prs` |
+| `/babysit-prs` | `devpilot:babysit-prs` |
 
 ## Agents
 
