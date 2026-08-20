@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.9.0 — 2026-08-21
+
+- New `devpilot:babysit-prs` skill: sweeps all of your own open GitHub PRs and
+  drives each to a merge-ready state — replies to and resolves new review
+  comments by pushing fixes, resolves merge conflicts against the base, and
+  repairs failing CI. Each pass is idempotent and only acts on PRs with
+  something new, so it is safe to run on a loop (`/loop /babysit-prs` or a
+  cron). Composes `devpilot:pr-guard` (conflicts/CI) and
+  `devpilot:resolving-review-threads` (thread handling) rather than restating
+  their logic.
+
 ## 1.8.0 — 2026-08-18
 
 - Fixed the review-board race when a claimed PR is merged or closed during the
